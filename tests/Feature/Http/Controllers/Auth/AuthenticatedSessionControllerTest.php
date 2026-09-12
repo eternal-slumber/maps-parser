@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Organization;
 use App\Models\User;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -24,6 +25,24 @@ it('authenticates a user with valid credentials', function () {
     ])->assertRedirectToRoute('home');
 
     $this->assertAuthenticatedAs($user);
+});
+
+it('authenticates a stateful api request through sanctum', function () {
+    $user = User::factory()->create([
+        'email' => 'test@example.com',
+        'password' => 'password',
+    ]);
+    $organization = Organization::factory()->for($user)->create();
+
+    $this->post(route('login.store'), [
+        'email' => 'test@example.com',
+        'password' => 'password',
+    ])->assertRedirectToRoute('home');
+
+    $this->withHeader('Origin', 'http://localhost')
+        ->getJson(route('organizations.show', $organization))
+        ->assertOk()
+        ->assertJsonPath('data.id', $organization->id);
 });
 
 it('rejects invalid credentials', function () {
