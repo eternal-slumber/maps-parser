@@ -92,6 +92,77 @@ it('rejects incomplete organization data', function () {
     ]);
 });
 
+it('rejects organization data with invalid types', function () {
+    $html = <<<'HTML'
+    <script type="application/json" class="state-view">
+    {"stack":[{"results":{"items":[{
+        "type":"business",
+        "id":"134528915428",
+        "title":"Дебри",
+        "ratingData":{"ratingCount":"6299","ratingValue":5,"reviewCount":2508}
+    }]}}]}
+    </script>
+    HTML;
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1' => Http::response($html),
+    ]);
+
+    expect(fn () => app(YandexMapsParser::class)->fetchOrganization('134528915428'))
+        ->toThrow(RuntimeException::class, 'Данные организации имеют некорректный формат.');
+    Http::assertSentInOrder([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
+    ]);
+});
+
+it('returns no reviews when the organization has none', function () {
+    $html = <<<'HTML'
+    <script type="application/json" class="state-view">
+    {"stack":[{"results":{"items":[{
+        "type":"business",
+        "id":"134528915428",
+        "title":"Новая организация",
+        "ratingData":{"ratingCount":0,"ratingValue":0,"reviewCount":0}
+    }]}}]}
+    </script>
+    HTML;
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1' => Http::response($html),
+    ]);
+
+    $result = app(YandexMapsParser::class)->fetch(
+        'https://yandex.ru/maps/org/new_company/134528915428/',
+    );
+
+    expect($result['reviews'])->toBe([]);
+    expect($result['organization']['review_count'])->toBe(0);
+    Http::assertSentInOrder([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
+    ]);
+});
+
+it('rejects unusable pages', function (string $html, string $message) {
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1' => Http::response($html),
+    ]);
+
+    expect(fn () => app(YandexMapsParser::class)->fetchOrganization('134528915428'))
+        ->toThrow(RuntimeException::class, $message);
+    Http::assertSentInOrder([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
+    ]);
+})->with([
+    'empty response' => ['', 'Яндекс вернул пустую страницу.'],
+    'captcha response' => [
+        '<html><form action="/checkcaptcha">Подтвердите запрос</form></html>',
+        'Яндекс заблокировал запрос или запросил captcha.',
+    ],
+]);
+
 it('returns organization and reviews without downloading the first page twice', function () {
     $firstPageHtml = <<<'HTML'
     <script type="application/json" class="state-view">
@@ -212,4 +283,19 @@ it('extracts normalized reviews from embedded JSON', function () {
             'updated_time' => '2026-09-11T12:00:00.000Z',
         ],
     ]);
+});
+
+it('rejects reviews with invalid types', function () {
+    $html = <<<'HTML'
+    <script>{"reviews":[{
+        "reviewId":"review-123",
+        "author":{"name":"Артём"},
+        "text":"Отличное место",
+        "rating":"5",
+        "updatedTime":"2026-09-11T12:00:00.000Z"
+    }]}</script>
+    HTML;
+
+    expect(fn () => app(YandexMapsParser::class)->parseHtml($html))
+        ->toThrow(RuntimeException::class, 'Отзыв имеет некорректный формат.');
 });

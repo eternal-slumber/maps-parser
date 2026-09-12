@@ -62,13 +62,17 @@ final class YandexMapsParser
 
         $businessId = $this->extractBusinessId($url);
         $firstPageHtml = $this->downloadPage($businessId, 1);
+        $organization = $this->parseOrganizationHtml($firstPageHtml, $businessId);
+        $firstPageReviews = $organization['review_count'] === 0
+            ? []
+            : $this->parseHtml($firstPageHtml);
 
         return [
-            'organization' => $this->parseOrganizationHtml($firstPageHtml, $businessId),
+            'organization' => $organization,
             'reviews' => $this->collectReviews(
                 $businessId,
                 $maxPages,
-                $this->parseHtml($firstPageHtml),
+                $firstPageReviews,
             ),
         ];
     }
@@ -182,7 +186,7 @@ final class YandexMapsParser
 
         return array_values(
             array_map(
-                fn (array $review): array => $this->normalizeReview($review),
+                fn (mixed $review): array => $this->normalizeReview($review),
                 $bestCandidate,
             ),
         );
@@ -245,7 +249,7 @@ final class YandexMapsParser
             throw new InvalidArgumentException('Номер страницы должен быть больше нуля.');
         }
 
-        return Http::withUserAgent(self::USER_AGENT)
+        $html = Http::withUserAgent(self::USER_AGENT)
             ->withHeaders([
                 'Accept' => 'text/html',
                 'Accept-Language' => 'ru-RU,ru;q=0.9',
@@ -258,6 +262,28 @@ final class YandexMapsParser
             )
             ->throw()
             ->body();
+
+        $this->ensurePageIsUsable($html);
+
+        return $html;
+    }
+
+    private function ensurePageIsUsable(string $html): void
+    {
+        if (trim($html) === '') {
+            throw new RuntimeException('Яндекс вернул пустую страницу.');
+        }
+
+        foreach ([
+            '/checkcaptcha',
+            'CheckboxCaptcha',
+            'SmartCaptcha',
+            'Подтвердите, что запросы отправляли вы',
+        ] as $captchaMarker) {
+            if (str_contains($html, $captchaMarker)) {
+                throw new RuntimeException('Яндекс заблокировал запрос или запросил captcha.');
+            }
+        }
     }
 
     /**
@@ -314,12 +340,30 @@ final class YandexMapsParser
                 throw new RuntimeException('Данные организации неполные.');
             }
 
+            $rating = $ratingData['ratingValue'];
+            $ratingCount = $ratingData['ratingCount'];
+            $reviewCount = $ratingData['reviewCount'];
+
+            if (
+                ! is_string($item['title'])
+                || trim($item['title']) === ''
+                || (! is_int($rating) && ! is_float($rating))
+                || $rating < 0
+                || $rating > 5
+                || ! is_int($ratingCount)
+                || $ratingCount < 0
+                || ! is_int($reviewCount)
+                || $reviewCount < 0
+            ) {
+                throw new RuntimeException('Данные организации имеют некорректный формат.');
+            }
+
             return [
                 'business_id' => $businessId,
-                'name' => (string) $item['title'],
-                'rating' => (float) $ratingData['ratingValue'],
-                'rating_count' => (int) $ratingData['ratingCount'],
-                'review_count' => (int) $ratingData['reviewCount'],
+                'name' => $item['title'],
+                'rating' => (float) $rating,
+                'rating_count' => $ratingCount,
+                'review_count' => $reviewCount,
             ];
         }
 
@@ -381,7 +425,6 @@ final class YandexMapsParser
     }
 
     /**
-     * @param  array<string, mixed>  $review
      * @return array{
      *     external_id: string,
      *     author_name: string|null,
@@ -390,8 +433,12 @@ final class YandexMapsParser
      *     updated_time: string
      * }
      */
-    private function normalizeReview(array $review): array
+    private function normalizeReview(mixed $review): array
     {
+        if (! is_array($review)) {
+            throw new RuntimeException('Отзыв имеет некорректный формат.');
+        }
+
         foreach (['reviewId', 'rating', 'updatedTime'] as $requiredField) {
             if (! array_key_exists($requiredField, $review)) {
                 throw new RuntimeException(
@@ -400,17 +447,31 @@ final class YandexMapsParser
             }
         }
 
+        $author = $review['author'] ?? null;
+
+        if (
+            ! is_string($review['reviewId'])
+            || trim($review['reviewId']) === ''
+            || ! is_int($review['rating'])
+            || $review['rating'] < 1
+            || $review['rating'] > 5
+            || ! is_string($review['updatedTime'])
+            || trim($review['updatedTime']) === ''
+            || (isset($review['text']) && ! is_string($review['text']))
+            || ($author !== null && ! is_array($author))
+            || (is_array($author) && isset($author['name']) && ! is_string($author['name']))
+        ) {
+            throw new RuntimeException('Отзыв имеет некорректный формат.');
+        }
+
         return [
-            'external_id' => (string) $review['reviewId'],
-            'author_name' => is_array($review['author'] ?? null)
-                && isset($review['author']['name'])
-                    ? (string) $review['author']['name']
-                    : null,
-            'text' => isset($review['text'])
-                ? (string) $review['text']
+            'external_id' => $review['reviewId'],
+            'author_name' => is_array($author) && isset($author['name'])
+                ? $author['name']
                 : null,
-            'rating' => (int) $review['rating'],
-            'updated_time' => (string) $review['updatedTime'],
+            'text' => $review['text'] ?? null,
+            'rating' => $review['rating'],
+            'updated_time' => $review['updatedTime'],
         ];
     }
 }
