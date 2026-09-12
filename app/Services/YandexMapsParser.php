@@ -38,6 +38,43 @@ final class YandexMapsParser
 
     /**
      * @return array{
+     *     organization: array{
+     *         business_id: string,
+     *         name: string,
+     *         rating: float,
+     *         rating_count: int,
+     *         review_count: int
+     *     },
+     *     reviews: list<array{
+     *         external_id: string,
+     *         author_name: string|null,
+     *         text: string|null,
+     *         rating: int,
+     *         updated_time: string
+     *     }>
+     * }
+     */
+    public function fetch(string $url, int $maxPages = 100): array
+    {
+        if ($maxPages < 1) {
+            throw new InvalidArgumentException('Лимит страниц должен быть больше нуля.');
+        }
+
+        $businessId = $this->extractBusinessId($url);
+        $firstPageHtml = $this->downloadPage($businessId, 1);
+
+        return [
+            'organization' => $this->parseOrganizationHtml($firstPageHtml, $businessId),
+            'reviews' => $this->collectReviews(
+                $businessId,
+                $maxPages,
+                $this->parseHtml($firstPageHtml),
+            ),
+        ];
+    }
+
+    /**
+     * @return array{
      *     business_id: string,
      *     name: string,
      *     rating: float,
@@ -68,26 +105,7 @@ final class YandexMapsParser
             throw new InvalidArgumentException('Лимит страниц должен быть больше нуля.');
         }
 
-        $reviewsById = [];
-
-        for ($page = 1; $page <= $maxPages; $page++) {
-            $newReviewsFound = false;
-
-            foreach ($this->fetchPage($businessId, $page) as $review) {
-                if (isset($reviewsById[$review['external_id']])) {
-                    continue;
-                }
-
-                $reviewsById[$review['external_id']] = $review;
-                $newReviewsFound = true;
-            }
-
-            if (! $newReviewsFound) {
-                break;
-            }
-        }
-
-        return array_values($reviewsById);
+        return $this->collectReviews($businessId, $maxPages);
     }
 
     /**
@@ -168,6 +186,53 @@ final class YandexMapsParser
                 $bestCandidate,
             ),
         );
+    }
+
+    /**
+     * @param  list<array{
+     *     external_id: string,
+     *     author_name: string|null,
+     *     text: string|null,
+     *     rating: int,
+     *     updated_time: string
+     * }>|null  $firstPageReviews
+     * @return list<array{
+     *     external_id: string,
+     *     author_name: string|null,
+     *     text: string|null,
+     *     rating: int,
+     *     updated_time: string
+     * }>
+     */
+    private function collectReviews(
+        string $businessId,
+        int $maxPages,
+        ?array $firstPageReviews = null,
+    ): array {
+        $reviewsById = [];
+
+        for ($page = 1; $page <= $maxPages; $page++) {
+            $newReviewsFound = false;
+
+            $pageReviews = $page === 1 && $firstPageReviews !== null
+                ? $firstPageReviews
+                : $this->fetchPage($businessId, $page);
+
+            foreach ($pageReviews as $review) {
+                if (isset($reviewsById[$review['external_id']])) {
+                    continue;
+                }
+
+                $reviewsById[$review['external_id']] = $review;
+                $newReviewsFound = true;
+            }
+
+            if (! $newReviewsFound) {
+                break;
+            }
+        }
+
+        return array_values($reviewsById);
     }
 
     private function downloadPage(string $businessId, int $page): string
