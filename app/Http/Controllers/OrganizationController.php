@@ -9,10 +9,27 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response as InertiaResponse;
 use Symfony\Component\HttpFoundation\Response;
 
 final class OrganizationController extends Controller
 {
+    public function index(Request $request): InertiaResponse
+    {
+        $organization = $this->user($request)
+            ->organizations()
+            ->latest('updated_at')
+            ->latest('id')
+            ->first();
+
+        return Inertia::render('Organizations/Index', [
+            'initialOrganization' => $organization === null
+                ? null
+                : OrganizationResource::make($organization)->resolve($request),
+        ]);
+    }
+
     public function store(StoreOrganizationRequest $request): JsonResponse
     {
         $organization = $this->user($request)->organizations()->updateOrCreate(

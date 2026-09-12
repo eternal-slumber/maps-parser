@@ -4,8 +4,9 @@ import {
     store,
 } from '@/actions/App/Http/Controllers/OrganizationController';
 import { destroy as logout } from '@/actions/App/Http/Controllers/Auth/AuthenticatedSessionController';
+import { index as reviewIndex } from '@/actions/App/Http/Controllers/ReviewController';
 import { Head, Link, useHttp } from '@inertiajs/vue3';
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 type Organization = {
     id: number;
@@ -24,13 +25,47 @@ type OrganizationResponse = {
     data: Organization;
 };
 
+type Review = {
+    id: number;
+    external_id: string;
+    author_name: string | null;
+    text: string | null;
+    rating: number;
+    published_at: string;
+};
+
+type PaginationMeta = {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+};
+
+type ReviewsResponse = {
+    data: Review[];
+    meta: PaginationMeta;
+};
+
+const props = defineProps<{
+    initialOrganization: Organization | null;
+}>();
+
 const createRequest = useHttp<{ url: string }, OrganizationResponse>({
     url: '',
 });
 const statusRequest = useHttp<Record<string, never>, OrganizationResponse>({});
-const organization = ref<Organization | null>(null);
+const reviewsRequest = useHttp<Record<string, never>, ReviewsResponse>({});
+const organization = ref<Organization | null>(props.initialOrganization);
+const reviews = ref<Review[]>([]);
+const pagination = ref<PaginationMeta | null>(null);
 const requestError = ref<string | null>(null);
+const reviewsError = ref<string | null>(null);
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+});
 
 const isSyncing = computed(() =>
     ['pending', 'processing'].includes(organization.value?.sync_status ?? ''),
@@ -50,6 +85,13 @@ const statusLabel = computed(() => {
             return '';
     }
 });
+
+const reviewPages = computed(() =>
+    Array.from(
+        { length: pagination.value?.last_page ?? 0 },
+        (_, index) => index + 1,
+    ),
+);
 
 function clearPollTimer(): void {
     if (pollTimer !== null) {
@@ -75,6 +117,11 @@ async function poll(): Promise<void> {
         await statusRequest.get(show(organization.value.id).url, {
             onSuccess: (response) => {
                 organization.value = response.data;
+
+                if (response.data.sync_status === 'completed') {
+                    void loadReviews();
+                }
+
                 schedulePoll();
             },
             onHttpException: () => {
@@ -89,9 +136,39 @@ async function poll(): Promise<void> {
     }
 }
 
+async function loadReviews(page = 1): Promise<void> {
+    if (organization.value?.sync_status !== 'completed') {
+        return;
+    }
+
+    reviewsError.value = null;
+
+    try {
+        await reviewsRequest.get(
+            reviewIndex(organization.value.id, { query: { page } }).url,
+            {
+                onSuccess: (response) => {
+                    reviews.value = response.data;
+                    pagination.value = response.meta;
+                },
+                onHttpException: () => {
+                    reviewsError.value = 'Не удалось загрузить отзывы.';
+                },
+                onNetworkError: () => {
+                    reviewsError.value = 'Нет соединения с сервером.';
+                },
+            },
+        );
+    } catch {
+        // Ошибка уже показана через useHttp.
+    }
+}
+
 async function submit(): Promise<void> {
     clearPollTimer();
     requestError.value = null;
+    reviews.value = [];
+    pagination.value = null;
 
     try {
         await createRequest.post(store().url, {
@@ -114,10 +191,23 @@ async function submit(): Promise<void> {
     }
 }
 
+function formatDate(date: string): string {
+    return dateFormatter.format(new Date(date));
+}
+
+onMounted(() => {
+    if (isSyncing.value) {
+        schedulePoll();
+    } else if (organization.value?.sync_status === 'completed') {
+        void loadReviews();
+    }
+});
+
 onUnmounted(() => {
     clearPollTimer();
     createRequest.cancel();
     statusRequest.cancel();
+    reviewsRequest.cancel();
 });
 </script>
 
@@ -243,6 +333,97 @@ onUnmounted(() => {
                 >
                     {{ organization.sync_error }}
                 </p>
+
+                <div
+                    v-if="organization.sync_status === 'completed'"
+                    class="mt-10 border-t border-zinc-200 pt-10"
+                >
+                    <div class="flex items-baseline justify-between gap-4">
+                        <h3 class="text-xl font-semibold">Отзывы</h3>
+                        <p v-if="pagination" class="text-sm text-zinc-500">
+                            {{ pagination.total }} всего
+                        </p>
+                    </div>
+
+                    <p
+                        v-if="reviewsRequest.processing && reviews.length === 0"
+                        class="mt-6 text-sm text-zinc-600"
+                    >
+                        Загружаем отзывы…
+                    </p>
+                    <p
+                        v-else-if="reviewsError"
+                        class="mt-6 text-sm text-red-700"
+                    >
+                        {{ reviewsError }}
+                    </p>
+                    <p
+                        v-else-if="
+                            !reviewsRequest.processing && reviews.length === 0
+                        "
+                        class="mt-6 text-sm text-zinc-600"
+                    >
+                        Отзывов пока нет.
+                    </p>
+
+                    <div v-else class="mt-4 divide-y divide-zinc-200">
+                        <article
+                            v-for="review in reviews"
+                            :key="review.id"
+                            class="py-6"
+                        >
+                            <div
+                                class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between"
+                            >
+                                <h4 class="font-medium">
+                                    {{
+                                        review.author_name ??
+                                        'Пользователь Яндекса'
+                                    }}
+                                </h4>
+                                <p class="text-sm text-zinc-500">
+                                    {{ formatDate(review.published_at) }} ·
+                                    {{ review.rating }}/5
+                                </p>
+                            </div>
+                            <p
+                                class="mt-3 text-sm leading-6 whitespace-pre-line text-zinc-700"
+                            >
+                                {{ review.text ?? 'Без текста' }}
+                            </p>
+                        </article>
+                    </div>
+
+                    <nav
+                        v-if="pagination && pagination.last_page > 1"
+                        class="mt-6 flex flex-wrap gap-2"
+                        aria-label="Страницы отзывов"
+                    >
+                        <button
+                            v-for="page in reviewPages"
+                            :key="page"
+                            type="button"
+                            :disabled="
+                                reviewsRequest.processing ||
+                                page === pagination.current_page
+                            "
+                            :aria-current="
+                                page === pagination.current_page
+                                    ? 'page'
+                                    : undefined
+                            "
+                            class="min-w-10 rounded-md border px-3 py-2 text-sm disabled:cursor-default"
+                            :class="
+                                page === pagination.current_page
+                                    ? 'border-zinc-950 bg-zinc-950 text-white'
+                                    : 'border-zinc-300 bg-white text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 disabled:opacity-60'
+                            "
+                            @click="loadReviews(page)"
+                        >
+                            {{ page }}
+                        </button>
+                    </nav>
+                </div>
             </section>
         </div>
     </main>

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\ReviewController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
@@ -12,7 +13,7 @@ Route::middleware('guest')->group(function () {
 });
 
 Route::middleware('auth')->group(function () {
-    Route::inertia('/', 'Organizations/Index')->name('home');
+    Route::get('/', [OrganizationController::class, 'index'])->name('home');
 
     Route::post('/organizations', [OrganizationController::class, 'store'])
         ->middleware('throttle:6,1')
@@ -20,6 +21,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/organizations/{organization}', [OrganizationController::class, 'show'])
         ->whereNumber('organization')
         ->name('organizations.show');
+    Route::get('/organizations/{organization}/reviews', [ReviewController::class, 'index'])
+        ->whereNumber('organization')
+        ->name('organizations.reviews.index');
 
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
 });
