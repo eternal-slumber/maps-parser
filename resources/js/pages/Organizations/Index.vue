@@ -3,7 +3,8 @@ import {
     show,
     store,
 } from '@/actions/App/Http/Controllers/OrganizationController';
-import { Head, useHttp } from '@inertiajs/vue3';
+import { destroy as logout } from '@/actions/App/Http/Controllers/Auth/AuthenticatedSessionController';
+import { Head, Link, useHttp } from '@inertiajs/vue3';
 import { computed, onUnmounted, ref } from 'vue';
 
 type Organization = {
@@ -125,13 +126,26 @@ onUnmounted(() => {
 
     <main class="min-h-screen bg-zinc-50 px-5 py-16 text-zinc-950 sm:py-24">
         <div class="mx-auto max-w-2xl">
-            <header class="mb-10">
-                <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
-                    Отзывы Яндекс Карт
-                </h1>
-                <p class="mt-3 max-w-xl text-base leading-7 text-zinc-600">
-                    Вставьте ссылку на организацию. Отзывы загрузятся в фоне.
-                </p>
+            <header class="mb-10 flex items-start justify-between gap-6">
+                <div>
+                    <h1
+                        class="text-3xl font-semibold tracking-tight sm:text-4xl"
+                    >
+                        Отзывы Яндекс Карт
+                    </h1>
+                    <p class="mt-3 max-w-xl text-base leading-7 text-zinc-600">
+                        Вставьте ссылку на организацию. Отзывы загрузятся в
+                        фоне.
+                    </p>
+                </div>
+                <Link
+                    :href="logout()"
+                    method="post"
+                    as="button"
+                    class="pt-2 text-sm text-zinc-600 hover:text-zinc-950 focus:underline focus:outline-none"
+                >
+                    Выйти
+                </Link>
             </header>
 
             <form
