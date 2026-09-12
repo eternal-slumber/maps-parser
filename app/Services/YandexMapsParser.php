@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use Closure;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use JsonException;
@@ -37,6 +38,7 @@ final class YandexMapsParser
     }
 
     /**
+     * @param  (Closure(int, int): void)|null  $onPageProcessed
      * @return array{
      *     organization: array{
      *         business_id: string,
@@ -54,8 +56,11 @@ final class YandexMapsParser
      *     }>
      * }
      */
-    public function fetch(string $url, int $maxPages = 100): array
-    {
+    public function fetch(
+        string $url,
+        int $maxPages = 100,
+        ?Closure $onPageProcessed = null,
+    ): array {
         if ($maxPages < 1) {
             throw new InvalidArgumentException('Лимит страниц должен быть больше нуля.');
         }
@@ -73,6 +78,7 @@ final class YandexMapsParser
                 $businessId,
                 $maxPages,
                 $firstPageReviews,
+                $onPageProcessed,
             ),
         ];
     }
@@ -200,6 +206,7 @@ final class YandexMapsParser
      *     rating: int,
      *     updated_time: string
      * }>|null  $firstPageReviews
+     * @param  (Closure(int, int): void)|null  $onPageProcessed
      * @return list<array{
      *     external_id: string,
      *     author_name: string|null,
@@ -212,11 +219,12 @@ final class YandexMapsParser
         string $businessId,
         int $maxPages,
         ?array $firstPageReviews = null,
+        ?Closure $onPageProcessed = null,
     ): array {
         $reviewsById = [];
 
         for ($page = 1; $page <= $maxPages; $page++) {
-            $newReviewsFound = false;
+            $newReviews = [];
 
             $pageReviews = $page === 1 && $firstPageReviews !== null
                 ? $firstPageReviews
@@ -228,12 +236,17 @@ final class YandexMapsParser
                 }
 
                 $reviewsById[$review['external_id']] = $review;
-                $newReviewsFound = true;
+                $newReviews[] = $review;
             }
 
-            if (! $newReviewsFound) {
+            if ($newReviews === []) {
                 break;
             }
+
+            $onPageProcessed?->__invoke(
+                $page,
+                count($reviewsById),
+            );
         }
 
         return array_values($reviewsById);

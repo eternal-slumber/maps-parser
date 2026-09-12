@@ -1,0 +1,124 @@
+<?php
+
+namespace App\Jobs;
+
+use App\Models\Organization;
+use App\Models\Review;
+use App\Services\YandexMapsParser;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
+use Throwable;
+
+class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
+{
+    use Queueable;
+
+    public int $tries = 4;
+
+    public int $timeout = 300;
+
+    public int $uniqueFor = 1800;
+
+    public function __construct(public int $organizationId)
+    {
+        $this->afterCommit = true;
+    }
+
+    public function handle(YandexMapsParser $parser): void
+    {
+        $organization = Organization::query()->findOrFail($this->organizationId);
+
+        $organization->update([
+            'sync_status' => Organization::SYNC_PROCESSING,
+            'processed_pages' => 0,
+            'processed_reviews' => 0,
+            'sync_error' => null,
+        ]);
+
+        $result = $parser->fetch(
+            url: $organization->source_url,
+            maxPages: 20,
+            onPageProcessed: function (
+                int $page,
+                int $processedReviews,
+            ) use ($organization): void {
+                $organization->update([
+                    'processed_pages' => $page,
+                    'processed_reviews' => $processedReviews,
+                ]);
+            },
+        );
+
+        $this->upsertReviews($organization, $result['reviews']);
+
+        $organization->update([
+            'business_id' => $result['organization']['business_id'],
+            'name' => $result['organization']['name'],
+            'rating' => $result['organization']['rating'],
+            'rating_count' => $result['organization']['rating_count'],
+            'review_count' => $result['organization']['review_count'],
+            'sync_status' => Organization::SYNC_COMPLETED,
+            'sync_error' => null,
+            'last_synced_at' => now(),
+        ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function backoff(): array
+    {
+        return [10, 30, 60];
+    }
+
+    public function uniqueId(): string
+    {
+        return (string) $this->organizationId;
+    }
+
+    public function failed(?Throwable $exception): void
+    {
+        Organization::query()
+            ->whereKey($this->organizationId)
+            ->update([
+                'sync_status' => Organization::SYNC_FAILED,
+                'sync_error' => Str::limit(
+                    $exception?->getMessage() ?? 'Синхронизация завершилась с ошибкой.',
+                    2000,
+                ),
+            ]);
+    }
+
+    /**
+     * @param  list<array{
+     *     external_id: string,
+     *     author_name: string|null,
+     *     text: string|null,
+     *     rating: int,
+     *     updated_time: string
+     * }>  $reviews
+     */
+    private function upsertReviews(Organization $organization, array $reviews): void
+    {
+        $rows = array_map(
+            fn (array $review): array => [
+                'organization_id' => $organization->id,
+                'external_id' => $review['external_id'],
+                'author_name' => $review['author_name'],
+                'text' => $review['text'],
+                'rating' => $review['rating'],
+                'published_at' => Carbon::parse($review['updated_time'])->utc(),
+            ],
+            $reviews,
+        );
+
+        Review::query()->upsert(
+            $rows,
+            ['organization_id', 'external_id'],
+            ['author_name', 'text', 'rating', 'published_at'],
+        );
+    }
+}

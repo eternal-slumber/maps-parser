@@ -16,7 +16,7 @@ use Illuminate\Support\Carbon;
  * @property int $user_id
  * @property string $source_url
  * @property string $business_id
- * @property string $name
+ * @property string|null $name
  * @property float $rating
  * @property int $rating_count
  * @property int $review_count
@@ -46,6 +46,14 @@ use Illuminate\Support\Carbon;
 ])]
 class Organization extends Model
 {
+    public const SYNC_PENDING = 'pending';
+
+    public const SYNC_PROCESSING = 'processing';
+
+    public const SYNC_COMPLETED = 'completed';
+
+    public const SYNC_FAILED = 'failed';
+
     /** @use HasFactory<OrganizationFactory> */
     use HasFactory;
 
