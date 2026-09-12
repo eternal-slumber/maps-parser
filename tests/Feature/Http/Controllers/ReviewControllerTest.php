@@ -52,3 +52,35 @@ it('returns 404 for another users organization', function () {
         ->getJson(route('organizations.reviews.index', $organization))
         ->assertNotFound();
 });
+
+it('filters reviews by rating before pagination', function () {
+    $user = User::factory()->create();
+    $organization = Organization::factory()->for($user)->create();
+    Review::factory()->count(3)->for($organization)->create(['rating' => 5]);
+    Review::factory()->count(2)->for($organization)->create(['rating' => 4]);
+
+    $this->actingAs($user)
+        ->getJson(route('organizations.reviews.index', [
+            'organization' => $organization,
+            'rating' => 5,
+        ]))
+        ->assertOk()
+        ->assertJsonCount(3, 'data')
+        ->assertJsonPath('meta.total', 3)
+        ->assertJsonPath('data.0.rating', 5)
+        ->assertJsonPath('data.1.rating', 5)
+        ->assertJsonPath('data.2.rating', 5);
+});
+
+it('rejects an invalid rating filter', function () {
+    $user = User::factory()->create();
+    $organization = Organization::factory()->for($user)->create();
+
+    $this->actingAs($user)
+        ->getJson(route('organizations.reviews.index', [
+            'organization' => $organization,
+            'rating' => 6,
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['rating' => 'Оценка должна быть от 1 до 5.']);
+});

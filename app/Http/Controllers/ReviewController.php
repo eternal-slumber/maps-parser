@@ -18,11 +18,22 @@ final class ReviewController extends Controller
 
         $organization = $user->organizations()->findOrFail($organization);
 
-        return ReviewResource::collection(
-            $organization->reviews()
-                ->latest('published_at')
-                ->latest('id')
-                ->paginate(50),
+        $request->validate(
+            ['rating' => ['nullable', 'integer', 'between:1,5']],
+            [
+                'rating.integer' => 'Оценка должна быть целым числом.',
+                'rating.between' => 'Оценка должна быть от 1 до 5.',
+            ],
         );
+
+        $reviews = $organization->reviews()
+            ->latest('published_at')
+            ->latest('id');
+
+        if ($request->filled('rating')) {
+            $reviews->where('rating', $request->integer('rating'));
+        }
+
+        return ReviewResource::collection($reviews->paginate(50));
     }
 }

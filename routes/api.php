@@ -5,6 +5,8 @@ use App\Http\Controllers\ReviewController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/organizations', [OrganizationController::class, 'index'])
+        ->name('organizations.index');
     Route::post('/organizations', [OrganizationController::class, 'store'])
         ->middleware('throttle:6,1')
         ->name('organizations.store');

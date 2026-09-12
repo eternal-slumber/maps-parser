@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
-use App\Http\Controllers\OrganizationController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
@@ -12,7 +11,7 @@ Route::middleware('guest')->group(function () {
 });
 
 Route::middleware('auth')->group(function () {
-    Route::get('/', [OrganizationController::class, 'index'])->name('home');
+    Route::inertia('/', 'Organizations/Index')->name('home');
 
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
 });

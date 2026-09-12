@@ -9,25 +9,20 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
-use Inertia\Response as InertiaResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Symfony\Component\HttpFoundation\Response;
 
 final class OrganizationController extends Controller
 {
-    public function index(Request $request): InertiaResponse
+    public function index(Request $request): AnonymousResourceCollection
     {
-        $organization = $this->user($request)
-            ->organizations()
-            ->latest('updated_at')
-            ->latest('id')
-            ->first();
-
-        return Inertia::render('Organizations/Index', [
-            'initialOrganization' => $organization === null
-                ? null
-                : OrganizationResource::make($organization)->resolve($request),
-        ]);
+        return OrganizationResource::collection(
+            $this->user($request)
+                ->organizations()
+                ->latest('updated_at')
+                ->latest('id')
+                ->get(),
+        );
     }
 
     public function store(StoreOrganizationRequest $request): JsonResponse

@@ -16,6 +16,28 @@ it('returns 401 when an unauthenticated user submits an organization', function 
     Queue::assertNothingPushed();
 });
 
+it('returns 401 when an unauthenticated user requests organizations', function () {
+    $this->getJson(route('organizations.index'))->assertUnauthorized();
+});
+
+it('returns only the authenticated users organizations in recent order', function () {
+    $user = User::factory()->create();
+    $older = Organization::factory()->for($user)->create([
+        'updated_at' => now()->subDay(),
+    ]);
+    $newer = Organization::factory()->for($user)->create([
+        'updated_at' => now(),
+    ]);
+    Organization::factory()->create();
+
+    $this->actingAs($user)
+        ->getJson(route('organizations.index'))
+        ->assertOk()
+        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('data.0.id', $newer->id)
+        ->assertJsonPath('data.1.id', $older->id);
+});
+
 it('rejects invalid organization links', function (array $payload, string $message) {
     $user = User::factory()->create();
 

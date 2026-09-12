@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+    index as organizationIndex,
     show,
     store,
 } from '@/actions/App/Http/Controllers/OrganizationController';
@@ -25,6 +26,10 @@ type OrganizationResponse = {
     data: Organization;
 };
 
+type OrganizationsResponse = {
+    data: Organization[];
+};
+
 type Review = {
     id: number;
     external_id: string;
@@ -46,18 +51,20 @@ type ReviewsResponse = {
     meta: PaginationMeta;
 };
 
-const props = defineProps<{
-    initialOrganization: Organization | null;
-}>();
-
 const createRequest = useHttp<{ url: string }, OrganizationResponse>({
     url: '',
 });
+const organizationsRequest = useHttp<
+    Record<string, never>,
+    OrganizationsResponse
+>({});
 const statusRequest = useHttp<Record<string, never>, OrganizationResponse>({});
 const reviewsRequest = useHttp<Record<string, never>, ReviewsResponse>({});
-const organization = ref<Organization | null>(props.initialOrganization);
+const organizations = ref<Organization[]>([]);
+const organization = ref<Organization | null>(null);
 const reviews = ref<Review[]>([]);
 const pagination = ref<PaginationMeta | null>(null);
+const ratingFilter = ref('');
 const requestError = ref<string | null>(null);
 const reviewsError = ref<string | null>(null);
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -113,10 +120,21 @@ async function poll(): Promise<void> {
         return;
     }
 
+    const organizationId = organization.value.id;
+
     try {
-        await statusRequest.get(show(organization.value.id).url, {
+        await statusRequest.get(show(organizationId).url, {
             onSuccess: (response) => {
+                organizations.value = organizations.value.map((item) =>
+                    item.id === response.data.id ? response.data : item,
+                );
+
+                if (organization.value?.id !== organizationId) {
+                    return;
+                }
+
                 organization.value = response.data;
+                requestError.value = null;
 
                 if (response.data.sync_status === 'completed') {
                     void loadReviews();
@@ -136,18 +154,86 @@ async function poll(): Promise<void> {
     }
 }
 
+function activateOrganization(selectedOrganization: Organization): void {
+    clearPollTimer();
+    organization.value = selectedOrganization;
+    reviews.value = [];
+    pagination.value = null;
+    requestError.value = null;
+    reviewsError.value = null;
+
+    if (isSyncing.value) {
+        schedulePoll();
+    } else if (selectedOrganization.sync_status === 'completed') {
+        void loadReviews();
+    }
+}
+
+async function loadOrganizations(): Promise<void> {
+    requestError.value = null;
+
+    try {
+        await organizationsRequest.get(organizationIndex().url, {
+            onSuccess: (response) => {
+                organizations.value = response.data;
+
+                const selectedOrganization = response.data[0];
+
+                if (selectedOrganization) {
+                    activateOrganization(selectedOrganization);
+                }
+            },
+            onHttpException: () => {
+                requestError.value = 'Не удалось загрузить организации.';
+            },
+            onNetworkError: () => {
+                requestError.value = 'Нет соединения с сервером.';
+            },
+        });
+    } catch {
+        // Ошибка уже показана через useHttp.
+    }
+}
+
+function changeOrganization(event: Event): void {
+    const organizationId = Number((event.target as HTMLSelectElement).value);
+    const selectedOrganization = organizations.value.find(
+        (item) => item.id === organizationId,
+    );
+
+    if (selectedOrganization) {
+        activateOrganization(selectedOrganization);
+    }
+}
+
 async function loadReviews(page = 1): Promise<void> {
     if (organization.value?.sync_status !== 'completed') {
         return;
     }
 
+    const organizationId = organization.value.id;
+    const selectedRating = ratingFilter.value;
     reviewsError.value = null;
 
     try {
         await reviewsRequest.get(
-            reviewIndex(organization.value.id, { query: { page } }).url,
+            reviewIndex(organizationId, {
+                query: {
+                    page,
+                    ...(selectedRating
+                        ? { rating: Number(selectedRating) }
+                        : {}),
+                },
+            }).url,
             {
                 onSuccess: (response) => {
+                    if (
+                        organization.value?.id !== organizationId ||
+                        ratingFilter.value !== selectedRating
+                    ) {
+                        return;
+                    }
+
                     reviews.value = response.data;
                     pagination.value = response.meta;
                 },
@@ -173,8 +259,13 @@ async function submit(): Promise<void> {
     try {
         await createRequest.post(store().url, {
             onSuccess: (response) => {
-                organization.value = response.data;
-                schedulePoll();
+                organizations.value = [
+                    response.data,
+                    ...organizations.value.filter(
+                        (item) => item.id !== response.data.id,
+                    ),
+                ];
+                activateOrganization(response.data);
             },
             onHttpException: (response) => {
                 requestError.value =
@@ -196,16 +287,13 @@ function formatDate(date: string): string {
 }
 
 onMounted(() => {
-    if (isSyncing.value) {
-        schedulePoll();
-    } else if (organization.value?.sync_status === 'completed') {
-        void loadReviews();
-    }
+    void loadOrganizations();
 });
 
 onUnmounted(() => {
     clearPollTimer();
     createRequest.cancel();
+    organizationsRequest.cancel();
     statusRequest.cancel();
     reviewsRequest.cancel();
 });
@@ -286,6 +374,29 @@ onUnmounted(() => {
                 </p>
             </form>
 
+            <div
+                v-if="organizations.length"
+                class="border-b border-zinc-200 py-6"
+            >
+                <label for="organization" class="block text-sm font-medium">
+                    Организация
+                </label>
+                <select
+                    id="organization"
+                    :value="organization?.id"
+                    class="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base outline-none focus:border-zinc-950 focus:ring-2 focus:ring-zinc-950/10"
+                    @change="changeOrganization"
+                >
+                    <option
+                        v-for="item in organizations"
+                        :key="item.id"
+                        :value="item.id"
+                    >
+                        {{ item.name ?? `Организация ${item.business_id}` }}
+                    </option>
+                </select>
+            </div>
+
             <section v-if="organization" class="pt-10" aria-live="polite">
                 <div
                     class="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between"
@@ -338,11 +449,32 @@ onUnmounted(() => {
                     v-if="organization.sync_status === 'completed'"
                     class="mt-10 border-t border-zinc-200 pt-10"
                 >
-                    <div class="flex items-baseline justify-between gap-4">
+                    <div
+                        class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
                         <h3 class="text-xl font-semibold">Отзывы</h3>
-                        <p v-if="pagination" class="text-sm text-zinc-500">
-                            {{ pagination.total }} всего
-                        </p>
+                        <div class="flex items-center gap-3">
+                            <p v-if="pagination" class="text-sm text-zinc-500">
+                                {{ pagination.total }} найдено
+                            </p>
+                            <label for="rating" class="sr-only">
+                                Фильтр по оценке
+                            </label>
+                            <select
+                                id="rating"
+                                v-model="ratingFilter"
+                                class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-950 focus:ring-2 focus:ring-zinc-950/10"
+                                :disabled="reviewsRequest.processing"
+                                @change="loadReviews()"
+                            >
+                                <option value="">Все оценки</option>
+                                <option value="5">5 звёзд</option>
+                                <option value="4">4 звезды</option>
+                                <option value="3">3 звезды</option>
+                                <option value="2">2 звезды</option>
+                                <option value="1">1 звезда</option>
+                            </select>
+                        </div>
                     </div>
 
                     <p
