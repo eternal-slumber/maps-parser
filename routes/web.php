@@ -3,7 +3,7 @@
 use App\Http\Controllers\OrganizationController;
 use Illuminate\Support\Facades\Route;
 
-Route::inertia('/', 'Welcome')->name('home');
+Route::inertia('/', 'Organizations/Index')->name('home');
 
 Route::middleware('auth')->group(function () {
     Route::post('/organizations', [OrganizationController::class, 'store'])
