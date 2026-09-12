@@ -23,6 +23,75 @@ it('rejects unsupported organization links', function (string $url) {
     'missing business id' => 'https://yandex.ru/maps/org/company/',
 ]);
 
+it('returns organization data from embedded state', function () {
+    $html = <<<'HTML'
+    <script type="application/json" class="state-view">
+    {
+        "stack": [{
+            "results": {
+                "items": [
+                    {
+                        "type": "business",
+                        "id": "999",
+                        "title": "Другая организация",
+                        "ratingData": {"ratingCount": 1, "ratingValue": 1, "reviewCount": 1}
+                    },
+                    {
+                        "type": "business",
+                        "id": "134528915428",
+                        "title": "Дебри",
+                        "ratingData": {"ratingCount": 6299, "ratingValue": 5, "reviewCount": 2508}
+                    }
+                ]
+            }
+        }]
+    }
+    </script>
+    HTML;
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1' => Http::response($html),
+    ]);
+
+    $organization = app(YandexMapsParser::class)->fetchOrganization('134528915428');
+
+    expect($organization)->toBe([
+        'business_id' => '134528915428',
+        'name' => 'Дебри',
+        'rating' => 5.0,
+        'rating_count' => 6299,
+        'review_count' => 2508,
+    ]);
+    Http::assertSentInOrder([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
+    ]);
+});
+
+it('rejects incomplete organization data', function () {
+    $html = <<<'HTML'
+    <script type="application/json" class="state-view">
+    {"stack":[{"results":{"items":[{
+        "type":"business",
+        "id":"134528915428",
+        "title":"Дебри",
+        "ratingData":{"ratingCount":6299,"ratingValue":5}
+    }]}}]}
+    </script>
+    HTML;
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1' => Http::response($html),
+    ]);
+
+    expect(fn () => app(YandexMapsParser::class)->fetchOrganization('134528915428'))
+        ->toThrow(RuntimeException::class, 'Данные организации неполные.');
+    Http::assertSentInOrder([
+        'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
+    ]);
+});
+
 it('collects unique reviews until a page repeats', function () {
     $reviewHtml = fn (string $reviewId): string => <<<HTML
     <script>

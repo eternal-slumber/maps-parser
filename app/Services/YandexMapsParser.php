@@ -37,6 +37,23 @@ final class YandexMapsParser
     }
 
     /**
+     * @return array{
+     *     business_id: string,
+     *     name: string,
+     *     rating: float,
+     *     rating_count: int,
+     *     review_count: int
+     * }
+     */
+    public function fetchOrganization(string $businessId): array
+    {
+        return $this->parseOrganizationHtml(
+            $this->downloadPage($businessId, 1),
+            $businessId,
+        );
+    }
+
+    /**
      * @return list<array{
      *     external_id: string,
      *     author_name: string|null,
@@ -84,29 +101,7 @@ final class YandexMapsParser
      */
     public function fetchPage(string $businessId, int $page = 1): array
     {
-        if ($businessId === '' || ! ctype_digit($businessId)) {
-            throw new InvalidArgumentException('Некорректный businessId.');
-        }
-
-        if ($page < 1) {
-            throw new InvalidArgumentException('Номер страницы должен быть больше нуля.');
-        }
-
-        $html = Http::withUserAgent(self::USER_AGENT)
-            ->withHeaders([
-                'Accept' => 'text/html',
-                'Accept-Language' => 'ru-RU,ru;q=0.9',
-            ])
-            ->connectTimeout(5)
-            ->timeout(20)
-            ->get(
-                "https://yandex.ru/maps/org/{$businessId}/reviews/",
-                ['page' => $page],
-            )
-            ->throw()
-            ->body();
-
-        return $this->parseHtml($html);
+        return $this->parseHtml($this->downloadPage($businessId, $page));
     }
 
     /**
@@ -173,6 +168,97 @@ final class YandexMapsParser
                 $bestCandidate,
             ),
         );
+    }
+
+    private function downloadPage(string $businessId, int $page): string
+    {
+        if ($businessId === '' || ! ctype_digit($businessId)) {
+            throw new InvalidArgumentException('Некорректный businessId.');
+        }
+
+        if ($page < 1) {
+            throw new InvalidArgumentException('Номер страницы должен быть больше нуля.');
+        }
+
+        return Http::withUserAgent(self::USER_AGENT)
+            ->withHeaders([
+                'Accept' => 'text/html',
+                'Accept-Language' => 'ru-RU,ru;q=0.9',
+            ])
+            ->connectTimeout(5)
+            ->timeout(20)
+            ->get(
+                "https://yandex.ru/maps/org/{$businessId}/reviews/",
+                ['page' => $page],
+            )
+            ->throw()
+            ->body();
+    }
+
+    /**
+     * @return array{
+     *     business_id: string,
+     *     name: string,
+     *     rating: float,
+     *     rating_count: int,
+     *     review_count: int
+     * }
+     */
+    private function parseOrganizationHtml(string $html, string $businessId): array
+    {
+        if (preg_match(
+            '~<script\b[^>]*\bclass=(["\'])[^"\']*\bstate-view\b[^"\']*\1[^>]*>(.*?)</script>~s',
+            $html,
+            $matches,
+        ) !== 1) {
+            throw new RuntimeException('Состояние страницы организации не найдено.');
+        }
+
+        try {
+            $state = json_decode($matches[2], true, flags: JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('Не удалось декодировать состояние страницы организации.', 0, $exception);
+        }
+
+        $items = is_array($state)
+            ? $state['stack'][0]['results']['items'] ?? null
+            : null;
+
+        if (! is_array($items)) {
+            throw new RuntimeException('Список организаций не найден в состоянии страницы.');
+        }
+
+        foreach ($items as $item) {
+            if (
+                ! is_array($item)
+                || ($item['type'] ?? null) !== 'business'
+                || (string) ($item['id'] ?? '') !== $businessId
+            ) {
+                continue;
+            }
+
+            $ratingData = $item['ratingData'] ?? null;
+
+            if (
+                ! array_key_exists('title', $item)
+                || ! is_array($ratingData)
+                || ! array_key_exists('ratingValue', $ratingData)
+                || ! array_key_exists('ratingCount', $ratingData)
+                || ! array_key_exists('reviewCount', $ratingData)
+            ) {
+                throw new RuntimeException('Данные организации неполные.');
+            }
+
+            return [
+                'business_id' => $businessId,
+                'name' => (string) $item['title'],
+                'rating' => (float) $ratingData['ratingValue'],
+                'rating_count' => (int) $ratingData['ratingCount'],
+                'review_count' => (int) $ratingData['reviewCount'],
+            ];
+        }
+
+        throw new RuntimeException('Организация не найдена в состоянии страницы.');
     }
 
     private function readJsonArray(string $source, int $start): ?string
