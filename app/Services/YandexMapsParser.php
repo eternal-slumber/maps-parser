@@ -135,6 +135,7 @@ final class YandexMapsParser
                 $maxPages,
                 $firstPageReviews,
                 $onPageProcessed,
+                $organization['review_count'],
             ),
         ];
     }
@@ -207,6 +208,7 @@ final class YandexMapsParser
         );
 
         $bestCandidate = [];
+        $foundEmptyReviews = false;
 
         foreach ($matches[0] as [, $offset]) {
             $arrayStart = strpos($html, '[', (int) $offset);
@@ -231,16 +233,26 @@ final class YandexMapsParser
                 continue;
             }
 
-            if (
-                is_array($candidate)
-                && isset($candidate[0]['reviewId'])
-                && count($candidate) > count($bestCandidate)
-            ) {
+            if (! is_array($candidate)) {
+                continue;
+            }
+
+            if ($candidate === []) {
+                $foundEmptyReviews = true;
+
+                continue;
+            }
+
+            if (isset($candidate[0]['reviewId']) && count($candidate) > count($bestCandidate)) {
                 $bestCandidate = $candidate;
             }
         }
 
         if ($bestCandidate === []) {
+            if ($foundEmptyReviews) {
+                return [];
+            }
+
             throw new RuntimeException(
                 'Отзывы не найдены: возможно, Яндекс изменил структуру страницы.',
             );
@@ -276,6 +288,7 @@ final class YandexMapsParser
         int $maxPages,
         ?array $firstPageReviews = null,
         ?Closure $onPageProcessed = null,
+        ?int $expectedReviewCount = null,
     ): array {
         $reviewsById = [];
 
@@ -303,6 +316,10 @@ final class YandexMapsParser
                 $page,
                 count($reviewsById),
             );
+
+            if ($expectedReviewCount !== null && count($reviewsById) >= $expectedReviewCount) {
+                break;
+            }
         }
 
         return array_values($reviewsById);

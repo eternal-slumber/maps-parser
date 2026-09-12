@@ -35,9 +35,7 @@ it('stores parser results and updates existing reviews without duplicates', func
     Http::fakeSequence('https://yandex.ru/maps/org/134528915428/reviews/*')
         ->push($organizationPage(4.2, 'Первоначальный текст'))
         ->push($reviewPage('review-2'))
-        ->push($reviewPage('review-2'))
         ->push($organizationPage(4.5, 'Обновлённый текст'))
-        ->push($reviewPage('review-2'))
         ->push($reviewPage('review-2'));
 
     $organization = Organization::factory()->create([

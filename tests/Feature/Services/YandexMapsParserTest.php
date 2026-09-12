@@ -182,14 +182,14 @@ it('rejects unusable pages', function (string $html, string $message) {
     ],
 ]);
 
-it('returns organization and reviews without downloading the first page twice', function () {
+it('stops at the reported review count without downloading the first page twice', function () {
     $firstPageHtml = <<<'HTML'
     <script type="application/json" class="state-view">
     {"stack":[{"results":{"items":[{
         "type":"business",
         "id":"134528915428",
         "title":"Дебри",
-        "ratingData":{"ratingCount":6299,"ratingValue":5,"reviewCount":2508}
+        "ratingData":{"ratingCount":6299,"ratingValue":5,"reviewCount":2}
     }]}}]}
     </script>
     <script>{"reviews":[{
@@ -213,7 +213,6 @@ it('returns organization and reviews without downloading the first page twice', 
     Http::preventStrayRequests();
     Http::fakeSequence('https://yandex.ru/maps/org/134528915428/reviews/*')
         ->push($firstPageHtml)
-        ->push($reviewHtml('review-2'))
         ->push($reviewHtml('review-2'));
 
     $result = app(YandexMapsParser::class)->fetch(
@@ -225,7 +224,7 @@ it('returns organization and reviews without downloading the first page twice', 
         'name' => 'Дебри',
         'rating' => 5.0,
         'rating_count' => 6299,
-        'review_count' => 2508,
+        'review_count' => 2,
     ]);
     expect(array_column($result['reviews'], 'external_id'))->toBe([
         'review-1',
@@ -234,8 +233,15 @@ it('returns organization and reviews without downloading the first page twice', 
     Http::assertSentInOrder([
         'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
         'https://yandex.ru/maps/org/134528915428/reviews/?page=2',
-        'https://yandex.ru/maps/org/134528915428/reviews/?page=3',
     ]);
+});
+
+it('returns no reviews from an explicitly empty reviews array', function () {
+    $reviews = app(YandexMapsParser::class)->parseHtml(
+        '<script>{"reviewResults":{"reviews":[]}}</script>',
+    );
+
+    expect($reviews)->toBe([]);
 });
 
 it('collects unique reviews until a page repeats', function () {
