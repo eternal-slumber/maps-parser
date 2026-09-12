@@ -3,6 +3,7 @@
 use App\Jobs\SyncYandexOrganization;
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
 it('returns 401 when an unauthenticated user submits an organization', function () {
@@ -56,6 +57,32 @@ it('stores an organization and dispatches its synchronization', function () {
         SyncYandexOrganization::class,
         fn (SyncYandexOrganization $job): bool => $job->organizationId === $response->json('data.id'),
     );
+});
+
+it('accepts a short organization link and stores its canonical url', function () {
+    $user = User::factory()->create();
+    Queue::fake([SyncYandexOrganization::class]);
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/-/CTtm6ILS' => Http::response('', 301, [
+            'Location' => '/maps/191/bryansk/?poi%5Buri%5D=ymapsbm1%3A%2F%2Forg%3Foid%3D137381017899',
+        ]),
+    ]);
+
+    $this->actingAs($user)
+        ->postJson(route('organizations.store'), [
+            'url' => 'https://yandex.ru/maps/-/CTtm6ILS',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('data.business_id', '137381017899')
+        ->assertJsonPath('data.url', 'https://yandex.ru/maps/org/137381017899/');
+
+    $this->assertDatabaseHas('organizations', [
+        'user_id' => $user->id,
+        'business_id' => '137381017899',
+        'source_url' => 'https://yandex.ru/maps/org/137381017899/',
+    ]);
+    Queue::assertPushed(SyncYandexOrganization::class);
 });
 
 it('updates the same organization instead of creating a duplicate', function () {

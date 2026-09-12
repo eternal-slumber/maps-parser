@@ -164,7 +164,7 @@ onUnmounted(() => {
                         name="url"
                         required
                         autocomplete="url"
-                        placeholder="https://yandex.ru/maps/org/..."
+                        placeholder="Полная или короткая ссылка Яндекс Карт"
                         class="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base outline-none placeholder:text-zinc-400 focus:border-zinc-950 focus:ring-2 focus:ring-zinc-950/10"
                         :aria-invalid="
                             createRequest.errors.url ? 'true' : undefined

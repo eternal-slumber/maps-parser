@@ -9,6 +9,7 @@ use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use InvalidArgumentException;
 use LogicException;
+use RuntimeException;
 
 final class StoreOrganizationRequest extends FormRequest
 {
@@ -37,9 +38,11 @@ final class StoreOrganizationRequest extends FormRequest
                     }
 
                     try {
-                        $this->businessId = $parser->extractBusinessId($value);
+                        $this->businessId = $parser->resolveBusinessId($value);
                     } catch (InvalidArgumentException) {
                         $fail('Укажите ссылку на организацию в Яндекс Картах.');
+                    } catch (RuntimeException) {
+                        $fail('Не удалось открыть сокращённую ссылку Яндекс Карт.');
                     }
                 },
             ],
@@ -67,6 +70,6 @@ final class StoreOrganizationRequest extends FormRequest
 
     public function organizationUrl(): string
     {
-        return $this->string('url')->toString();
+        return "https://yandex.ru/maps/org/{$this->businessId()}/";
     }
 }
