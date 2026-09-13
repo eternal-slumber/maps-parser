@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Services\YandexMapsParser;
+use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -158,6 +159,10 @@ it('returns no reviews when the organization has none', function () {
 
     expect($result['reviews'])->toBe([]);
     expect($result['organization']['review_count'])->toBe(0);
+    expect($result['collection'])->toBe([
+        'status' => YandexMapsParser::COLLECTION_COMPLETE,
+        'stop_reason' => 'reported_total_reached',
+    ]);
     Http::assertSentInOrder([
         'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
     ]);
@@ -230,6 +235,10 @@ it('stops at the reported review count without downloading the first page twice'
         'review-1',
         'review-2',
     ]);
+    expect($result['collection'])->toBe([
+        'status' => YandexMapsParser::COLLECTION_COMPLETE,
+        'stop_reason' => 'reported_total_reached',
+    ]);
     Http::assertSentInOrder([
         'https://yandex.ru/maps/org/134528915428/reviews/?page=1',
         'https://yandex.ru/maps/org/134528915428/reviews/?page=2',
@@ -244,7 +253,7 @@ it('returns no reviews from an explicitly empty reviews array', function () {
     expect($reviews)->toBe([]);
 });
 
-it('collects unique reviews until a page repeats', function () {
+it('rejects a partial fetchAll result when a page repeats', function () {
     $reviewHtml = fn (string $reviewId): string => <<<HTML
     <script>
     {
@@ -267,17 +276,99 @@ it('collects unique reviews until a page repeats', function () {
         ->push($reviewHtml('review-2'))
         ->push($reviewHtml('review-2'));
 
-    $reviews = app(YandexMapsParser::class)->fetchAll('123');
-
-    expect(array_column($reviews, 'external_id'))->toBe([
-        'review-1',
-        'review-2',
-    ]);
+    expect(fn () => app(YandexMapsParser::class)->fetchAll('123'))
+        ->toThrow(RuntimeException::class, 'Сбор отзывов подозрительно оборвался: repeated_page.');
     Http::assertSentInOrder([
         'https://yandex.ru/maps/org/123/reviews/?page=1',
         'https://yandex.ru/maps/org/123/reviews/?page=2',
         'https://yandex.ru/maps/org/123/reviews/?page=3',
     ]);
+});
+
+it('reports empty, repeated, and max-page stops as suspicious', function (
+    string $ending,
+    int $maxPages,
+    int $requestCount,
+    string $stopReason,
+) {
+    $review = <<<'JSON'
+    {
+        "reviewId":"review-1",
+        "rating":5,
+        "updatedTime":"2026-09-11T12:00:00.000Z"
+    }
+    JSON;
+    $firstPageHtml = <<<HTML
+    <script class="state-view">{"stack":[{"results":{"items":[{
+        "type":"business",
+        "id":"134528915428",
+        "title":"Дебри",
+        "ratingData":{"ratingCount":1000,"ratingValue":5,"reviewCount":600}
+    }]}}]}</script>
+    <script>{"reviews":[{$review}]}</script>
+    HTML;
+    $nextPageHtml = match ($ending) {
+        'empty' => '<script>{"reviews":[]}</script>',
+        'repeated' => "<script>{\"reviews\":[{$review}]}</script>",
+        'max_pages' => null,
+    };
+
+    Http::preventStrayRequests();
+    $sequence = Http::fakeSequence('https://yandex.ru/maps/org/134528915428/reviews/*')
+        ->push($firstPageHtml);
+
+    if ($nextPageHtml !== null) {
+        $sequence->push($nextPageHtml);
+    }
+
+    $result = app(YandexMapsParser::class)->fetch(
+        'https://yandex.ru/maps/org/134528915428/',
+        $maxPages,
+    );
+
+    expect($result['reviews'])->toHaveCount(1);
+    expect($result['collection'])->toBe([
+        'status' => YandexMapsParser::COLLECTION_SUSPICIOUS,
+        'stop_reason' => $stopReason,
+    ]);
+    Http::assertSentCount($requestCount);
+})->with([
+    'empty page' => ['empty', 20, 2, 'empty_page'],
+    'repeated page' => ['repeated', 20, 2, 'repeated_page'],
+    'max pages' => ['max_pages', 1, 1, 'max_pages_reached'],
+]);
+
+it('reports the Yandex limit when fewer reviews are available than reported', function () {
+    Http::preventStrayRequests();
+    Http::fake(function (Request $request): PromiseInterface {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $page = (int) ($query['page'] ?? 1);
+        $reviews = array_map(
+            fn (int $index): array => [
+                'reviewId' => "review-{$page}-{$index}",
+                'rating' => 5,
+                'updatedTime' => '2026-09-11T12:00:00.000Z',
+            ],
+            range(1, 50),
+        );
+        $state = $page === 1
+            ? '<script class="state-view">{"stack":[{"results":{"items":[{"type":"business","id":"134528915428","title":"Дебри","ratingData":{"ratingCount":6299,"ratingValue":5,"reviewCount":2508}}]}}]}</script>'
+            : '';
+
+        return Http::response($state.'<script>'.json_encode(['reviews' => $reviews], JSON_THROW_ON_ERROR).'</script>');
+    });
+
+    $result = app(YandexMapsParser::class)->fetch(
+        'https://yandex.ru/maps/org/134528915428/',
+        20,
+    );
+
+    expect($result['reviews'])->toHaveCount(600);
+    expect($result['collection'])->toBe([
+        'status' => YandexMapsParser::COLLECTION_SOURCE_LIMITED,
+        'stop_reason' => 'source_limit_reached',
+    ]);
+    Http::assertSentCount(12);
 });
 
 it('extracts normalized reviews from embedded JSON', function () {

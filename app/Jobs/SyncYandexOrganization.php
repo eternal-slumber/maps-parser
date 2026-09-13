@@ -11,6 +11,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
@@ -57,6 +58,17 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
             },
         );
 
+        if ($result['collection']['status'] === YandexMapsParser::COLLECTION_SUSPICIOUS) {
+            $reason = match ($result['collection']['stop_reason']) {
+                'empty_page' => 'Яндекс вернул пустую страницу до ожидаемого конца.',
+                'repeated_page' => 'Яндекс повторил уже полученную страницу отзывов.',
+                'max_pages_reached' => 'Достигнут лимит страниц до полного результата.',
+                default => 'Причина обрыва не определена.',
+            };
+
+            throw new RuntimeException("Сбор отзывов подозрительно оборвался: {$reason}");
+        }
+
         DB::transaction(function () use ($result): void {
             $organization = Organization::query()
                 ->lockForUpdate()
@@ -74,7 +86,9 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
                 'rating' => $result['organization']['rating'],
                 'rating_count' => $result['organization']['rating_count'],
                 'review_count' => $result['organization']['review_count'],
-                'sync_status' => Organization::SYNC_COMPLETED,
+                'sync_status' => $result['collection']['status'] === YandexMapsParser::COLLECTION_SOURCE_LIMITED
+                    ? Organization::SYNC_LIMITED
+                    : Organization::SYNC_COMPLETED,
                 'sync_error' => null,
                 'last_synced_at' => now(),
             ]);

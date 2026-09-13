@@ -14,6 +14,14 @@ use RuntimeException;
 
 final class YandexMapsParser
 {
+    public const COLLECTION_COMPLETE = 'complete';
+
+    public const COLLECTION_SOURCE_LIMITED = 'source_limited';
+
+    public const COLLECTION_SUSPICIOUS = 'suspicious';
+
+    private const MAX_AVAILABLE_REVIEWS = 600;
+
     private const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
     public function extractBusinessId(string $url): string
@@ -109,7 +117,11 @@ final class YandexMapsParser
      *         text: string|null,
      *         rating: int,
      *         updated_time: string
-     *     }>
+     *     }>,
+     *     collection: array{
+     *         status: 'complete'|'source_limited'|'suspicious',
+     *         stop_reason: 'reported_total_reached'|'source_limit_reached'|'empty_page'|'repeated_page'|'max_pages_reached'
+     *     }
      * }
      */
     public function fetch(
@@ -128,15 +140,21 @@ final class YandexMapsParser
             ? []
             : $this->parseHtml($firstPageHtml);
 
+        $collection = $this->collectReviews(
+            $businessId,
+            $maxPages,
+            $firstPageReviews,
+            $onPageProcessed,
+            $organization['review_count'],
+        );
+
         return [
             'organization' => $organization,
-            'reviews' => $this->collectReviews(
-                $businessId,
-                $maxPages,
-                $firstPageReviews,
-                $onPageProcessed,
-                $organization['review_count'],
-            ),
+            'reviews' => $collection['reviews'],
+            'collection' => [
+                'status' => $collection['status'],
+                'stop_reason' => $collection['stop_reason'],
+            ],
         ];
     }
 
@@ -172,7 +190,15 @@ final class YandexMapsParser
             throw new InvalidArgumentException('Лимит страниц должен быть больше нуля.');
         }
 
-        return $this->collectReviews($businessId, $maxPages);
+        $collection = $this->collectReviews($businessId, $maxPages);
+
+        if ($collection['status'] === self::COLLECTION_SUSPICIOUS) {
+            throw new RuntimeException(
+                "Сбор отзывов подозрительно оборвался: {$collection['stop_reason']}.",
+            );
+        }
+
+        return $collection['reviews'];
     }
 
     /**
@@ -275,13 +301,17 @@ final class YandexMapsParser
      *     updated_time: string
      * }>|null  $firstPageReviews
      * @param  (Closure(int, int): void)|null  $onPageProcessed
-     * @return list<array{
-     *     external_id: string,
-     *     author_name: string|null,
-     *     text: string|null,
-     *     rating: int,
-     *     updated_time: string
-     * }>
+     * @return array{
+     *     reviews: list<array{
+     *         external_id: string,
+     *         author_name: string|null,
+     *         text: string|null,
+     *         rating: int,
+     *         updated_time: string
+     *     }>,
+     *     status: 'complete'|'source_limited'|'suspicious',
+     *     stop_reason: 'reported_total_reached'|'source_limit_reached'|'empty_page'|'repeated_page'|'max_pages_reached'
+     * }
      */
     private function collectReviews(
         string $businessId,
@@ -291,6 +321,14 @@ final class YandexMapsParser
         ?int $expectedReviewCount = null,
     ): array {
         $reviewsById = [];
+
+        if ($expectedReviewCount === 0) {
+            return [
+                'reviews' => [],
+                'status' => self::COLLECTION_COMPLETE,
+                'stop_reason' => 'reported_total_reached',
+            ];
+        }
 
         for ($page = 1; $page <= $maxPages; $page++) {
             $newReviews = [];
@@ -308,8 +346,20 @@ final class YandexMapsParser
                 $newReviews[] = $review;
             }
 
+            if ($pageReviews === []) {
+                return [
+                    'reviews' => array_values($reviewsById),
+                    'status' => self::COLLECTION_SUSPICIOUS,
+                    'stop_reason' => 'empty_page',
+                ];
+            }
+
             if ($newReviews === []) {
-                break;
+                return [
+                    'reviews' => array_values($reviewsById),
+                    'status' => self::COLLECTION_SUSPICIOUS,
+                    'stop_reason' => 'repeated_page',
+                ];
             }
 
             $onPageProcessed?->__invoke(
@@ -318,11 +368,27 @@ final class YandexMapsParser
             );
 
             if ($expectedReviewCount !== null && count($reviewsById) >= $expectedReviewCount) {
-                break;
+                return [
+                    'reviews' => array_values($reviewsById),
+                    'status' => self::COLLECTION_COMPLETE,
+                    'stop_reason' => 'reported_total_reached',
+                ];
+            }
+
+            if (count($reviewsById) >= self::MAX_AVAILABLE_REVIEWS) {
+                return [
+                    'reviews' => array_values($reviewsById),
+                    'status' => self::COLLECTION_SOURCE_LIMITED,
+                    'stop_reason' => 'source_limit_reached',
+                ];
             }
         }
 
-        return array_values($reviewsById);
+        return [
+            'reviews' => array_values($reviewsById),
+            'status' => self::COLLECTION_SUSPICIOUS,
+            'stop_reason' => 'max_pages_reached',
+        ];
     }
 
     private function downloadPage(string $businessId, int $page): string

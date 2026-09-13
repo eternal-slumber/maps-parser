@@ -52,6 +52,8 @@ class Organization extends Model
 
     public const SYNC_COMPLETED = 'completed';
 
+    public const SYNC_LIMITED = 'limited';
+
     public const SYNC_FAILED = 'failed';
 
     /** @use HasFactory<OrganizationFactory> */

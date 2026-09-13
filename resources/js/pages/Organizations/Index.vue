@@ -17,7 +17,7 @@ type Organization = {
     rating: number;
     rating_count: number;
     review_count: number;
-    sync_status: 'pending' | 'processing' | 'completed' | 'failed';
+    sync_status: 'pending' | 'processing' | 'completed' | 'limited' | 'failed';
     processed_pages: number;
     processed_reviews: number;
     sync_error: string | null;
@@ -79,6 +79,9 @@ const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
 const isSyncing = computed(() =>
     ['pending', 'processing'].includes(organization.value?.sync_status ?? ''),
 );
+const hasFinishedSync = computed(() =>
+    ['completed', 'limited'].includes(organization.value?.sync_status ?? ''),
+);
 
 const statusLabel = computed(() => {
     switch (organization.value?.sync_status) {
@@ -88,6 +91,8 @@ const statusLabel = computed(() => {
             return 'Загружаем отзывы';
         case 'completed':
             return 'Готово';
+        case 'limited':
+            return 'Получен доступный лимит';
         case 'failed':
             return 'Ошибка';
         default:
@@ -138,7 +143,7 @@ async function poll(): Promise<void> {
                 organization.value = response.data;
                 requestError.value = null;
 
-                if (response.data.sync_status === 'completed') {
+                if (hasFinishedSync.value) {
                     void loadReviews();
                 }
 
@@ -166,7 +171,7 @@ function activateOrganization(selectedOrganization: Organization): void {
 
     if (isSyncing.value) {
         schedulePoll();
-    } else if (selectedOrganization.sync_status === 'completed') {
+    } else if (hasFinishedSync.value) {
         void loadReviews();
     }
 }
@@ -258,7 +263,7 @@ async function deleteOrganization(): Promise<void> {
 }
 
 async function loadReviews(page = 1): Promise<void> {
-    if (organization.value?.sync_status !== 'completed') {
+    if (organization.value === null || !hasFinishedSync.value) {
         return;
     }
 
@@ -516,6 +521,13 @@ onUnmounted(() => {
                     {{ organization.processed_reviews }}
                 </p>
                 <p
+                    v-else-if="organization.sync_status === 'limited'"
+                    class="mt-6 text-sm text-amber-700"
+                >
+                    Яндекс предоставил последние
+                    {{ organization.processed_reviews }} доступных отзывов.
+                </p>
+                <p
                     v-else-if="organization.sync_error"
                     class="mt-6 text-sm text-red-700"
                 >
@@ -523,7 +535,7 @@ onUnmounted(() => {
                 </p>
 
                 <div
-                    v-if="organization.sync_status === 'completed'"
+                    v-if="hasFinishedSync"
                     class="mt-10 border-t border-zinc-200 pt-10"
                 >
                     <div
