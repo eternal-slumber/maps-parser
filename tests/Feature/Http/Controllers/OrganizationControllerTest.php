@@ -2,6 +2,7 @@
 
 use App\Jobs\SyncYandexOrganization;
 use App\Models\Organization;
+use App\Models\Review;
 use App\Models\User;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -143,4 +144,37 @@ it('returns 404 for another users organization', function () {
     $this->actingAs($otherUser)
         ->getJson(route('organizations.show', $organization))
         ->assertNotFound();
+});
+
+it('returns 401 when an unauthenticated user deletes an organization', function () {
+    $organization = Organization::factory()->create();
+
+    $this->deleteJson(route('organizations.destroy', $organization))
+        ->assertUnauthorized();
+
+    $this->assertModelExists($organization);
+});
+
+it('deletes an organization owned by the authenticated user', function () {
+    $user = User::factory()->create();
+    $organization = Organization::factory()->for($user)->create();
+    $review = Review::factory()->for($organization)->create();
+
+    $this->actingAs($user)
+        ->deleteJson(route('organizations.destroy', $organization))
+        ->assertNoContent();
+
+    $this->assertModelMissing($organization);
+    $this->assertModelMissing($review);
+});
+
+it('returns 404 when deleting another users organization', function () {
+    $organization = Organization::factory()->create();
+    $otherUser = User::factory()->create();
+
+    $this->actingAs($otherUser)
+        ->deleteJson(route('organizations.destroy', $organization))
+        ->assertNotFound();
+
+    $this->assertModelExists($organization);
 });

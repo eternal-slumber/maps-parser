@@ -78,3 +78,14 @@ it('records the final queue failure on the organization', function () {
         ->sync_status->toBe(Organization::SYNC_FAILED)
         ->sync_error->toBe('Яндекс временно недоступен.');
 });
+
+it('ignores a queued synchronization after its organization was deleted', function () {
+    Http::preventStrayRequests();
+    $organization = Organization::factory()->create();
+    $organizationId = $organization->id;
+    $organization->delete();
+
+    SyncYandexOrganization::dispatchSync($organizationId);
+
+    $this->assertModelMissing($organization);
+});

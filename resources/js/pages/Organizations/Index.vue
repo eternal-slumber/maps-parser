@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+    destroy as destroyOrganization,
     index as organizationIndex,
     show,
     store,
@@ -60,6 +61,7 @@ const organizationsRequest = useHttp<
 >({});
 const statusRequest = useHttp<Record<string, never>, OrganizationResponse>({});
 const reviewsRequest = useHttp<Record<string, never>, ReviewsResponse>({});
+const deleteRequest = useHttp<Record<string, never>>({});
 const organizations = ref<Organization[]>([]);
 const organization = ref<Organization | null>(null);
 const reviews = ref<Review[]>([]);
@@ -206,6 +208,55 @@ function changeOrganization(event: Event): void {
     }
 }
 
+async function deleteOrganization(): Promise<void> {
+    if (organization.value === null) {
+        return;
+    }
+
+    const organizationId = organization.value.id;
+    const organizationName =
+        organization.value.name ??
+        `Организация ${organization.value.business_id}`;
+
+    if (!window.confirm(`Удалить «${organizationName}» и все её отзывы?`)) {
+        return;
+    }
+
+    clearPollTimer();
+    statusRequest.cancel();
+    reviewsRequest.cancel();
+    requestError.value = null;
+
+    try {
+        await deleteRequest.delete(destroyOrganization(organizationId).url, {
+            onSuccess: () => {
+                organizations.value = organizations.value.filter(
+                    (item) => item.id !== organizationId,
+                );
+                organization.value = null;
+                reviews.value = [];
+                pagination.value = null;
+
+                const nextOrganization = organizations.value[0];
+
+                if (nextOrganization) {
+                    activateOrganization(nextOrganization);
+                }
+            },
+            onHttpException: () => {
+                requestError.value = 'Не удалось удалить организацию.';
+            },
+            onNetworkError: () => {
+                requestError.value = 'Нет соединения с сервером.';
+            },
+        });
+    } catch {
+        if (organization.value?.id === organizationId) {
+            schedulePoll();
+        }
+    }
+}
+
 async function loadReviews(page = 1): Promise<void> {
     if (organization.value?.sync_status !== 'completed') {
         return;
@@ -286,6 +337,18 @@ function formatDate(date: string): string {
     return dateFormatter.format(new Date(date));
 }
 
+function reviewRatingClass(rating: number): string {
+    if (rating >= 4) {
+        return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
+    }
+
+    if (rating === 3) {
+        return 'bg-amber-50 text-amber-700 ring-amber-600/20';
+    }
+
+    return 'bg-red-50 text-red-700 ring-red-600/20';
+}
+
 onMounted(() => {
     void loadOrganizations();
 });
@@ -296,6 +359,7 @@ onUnmounted(() => {
     organizationsRequest.cancel();
     statusRequest.cancel();
     reviewsRequest.cancel();
+    deleteRequest.cancel();
 });
 </script>
 
@@ -384,6 +448,7 @@ onUnmounted(() => {
                 <select
                     id="organization"
                     :value="organization?.id"
+                    :disabled="deleteRequest.processing"
                     class="mt-2 w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base outline-none focus:border-zinc-950 focus:ring-2 focus:ring-zinc-950/10"
                     @change="changeOrganization"
                 >
@@ -398,18 +463,30 @@ onUnmounted(() => {
             </div>
 
             <section v-if="organization" class="pt-10" aria-live="polite">
-                <div
-                    class="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between"
-                >
+                <div class="flex items-start justify-between gap-4">
                     <h2 class="text-xl font-semibold">
                         {{
                             organization.name ??
                             `Организация ${organization.business_id}`
                         }}
                     </h2>
-                    <p class="text-sm font-medium text-zinc-600">
-                        {{ statusLabel }}
-                    </p>
+                    <div class="flex items-center gap-4">
+                        <p class="text-sm font-medium text-zinc-600">
+                            {{ statusLabel }}
+                        </p>
+                        <button
+                            type="button"
+                            :disabled="deleteRequest.processing"
+                            class="text-sm text-red-700 hover:text-red-900 focus:underline focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            @click="deleteOrganization"
+                        >
+                            {{
+                                deleteRequest.processing
+                                    ? 'Удаляем…'
+                                    : 'Удалить'
+                            }}
+                        </button>
+                    </div>
                 </div>
 
                 <dl class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-3">
@@ -513,9 +590,18 @@ onUnmounted(() => {
                                         'Пользователь Яндекса'
                                     }}
                                 </h4>
-                                <p class="text-sm text-zinc-500">
-                                    {{ formatDate(review.published_at) }} ·
-                                    {{ review.rating }}/5
+                                <p
+                                    class="flex items-center gap-2 text-sm text-zinc-500"
+                                >
+                                    {{ formatDate(review.published_at) }}
+                                    <span
+                                        class="inline-flex rounded-full px-2 py-0.5 font-medium ring-1 ring-inset"
+                                        :class="
+                                            reviewRatingClass(review.rating)
+                                        "
+                                    >
+                                        {{ review.rating }}/5
+                                    </span>
                                 </p>
                             </div>
                             <p

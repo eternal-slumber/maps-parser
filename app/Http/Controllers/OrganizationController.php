@@ -54,6 +54,16 @@ final class OrganizationController extends Controller
         return OrganizationResource::make($organization);
     }
 
+    public function destroy(Request $request, int $organization): Response
+    {
+        $this->user($request)
+            ->organizations()
+            ->findOrFail($organization)
+            ->delete();
+
+        return response()->noContent();
+    }
+
     private function user(Request $request): User
     {
         $user = $request->user();

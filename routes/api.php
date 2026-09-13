@@ -13,6 +13,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/organizations/{organization}', [OrganizationController::class, 'show'])
         ->whereNumber('organization')
         ->name('organizations.show');
+    Route::delete('/organizations/{organization}', [OrganizationController::class, 'destroy'])
+        ->whereNumber('organization')
+        ->name('organizations.destroy');
     Route::get('/organizations/{organization}/reviews', [ReviewController::class, 'index'])
         ->whereNumber('organization')
         ->name('organizations.reviews.index');

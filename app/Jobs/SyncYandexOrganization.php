@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -29,7 +30,11 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
 
     public function handle(YandexMapsParser $parser): void
     {
-        $organization = Organization::query()->findOrFail($this->organizationId);
+        $organization = Organization::query()->find($this->organizationId);
+
+        if ($organization === null) {
+            return;
+        }
 
         $organization->update([
             'sync_status' => Organization::SYNC_PROCESSING,
@@ -52,18 +57,28 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
             },
         );
 
-        $this->upsertReviews($organization, $result['reviews']);
+        DB::transaction(function () use ($result): void {
+            $organization = Organization::query()
+                ->lockForUpdate()
+                ->find($this->organizationId);
 
-        $organization->update([
-            'business_id' => $result['organization']['business_id'],
-            'name' => $result['organization']['name'],
-            'rating' => $result['organization']['rating'],
-            'rating_count' => $result['organization']['rating_count'],
-            'review_count' => $result['organization']['review_count'],
-            'sync_status' => Organization::SYNC_COMPLETED,
-            'sync_error' => null,
-            'last_synced_at' => now(),
-        ]);
+            if ($organization === null) {
+                return;
+            }
+
+            $this->upsertReviews($organization, $result['reviews']);
+
+            $organization->update([
+                'business_id' => $result['organization']['business_id'],
+                'name' => $result['organization']['name'],
+                'rating' => $result['organization']['rating'],
+                'rating_count' => $result['organization']['rating_count'],
+                'review_count' => $result['organization']['review_count'],
+                'sync_status' => Organization::SYNC_COMPLETED,
+                'sync_error' => null,
+                'last_synced_at' => now(),
+            ]);
+        });
     }
 
     /**
