@@ -10,6 +10,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -44,29 +45,39 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
             'sync_error' => null,
         ]);
 
-        $result = $parser->fetch(
-            url: $organization->source_url,
-            maxPages: 20,
-            onPageProcessed: function (
-                int $page,
-                int $processedReviews,
-            ) use ($organization): void {
-                $organization->update([
-                    'processed_pages' => $page,
-                    'processed_reviews' => $processedReviews,
-                ]);
-            },
-        );
+        try {
+            $result = $parser->fetch(
+                url: $organization->source_url,
+                maxPages: 20,
+                onPageProcessed: function (
+                    int $page,
+                    int $processedReviews,
+                ) use ($organization): void {
+                    $organization->update([
+                        'processed_pages' => $page,
+                        'processed_reviews' => $processedReviews,
+                    ]);
+                },
+            );
 
-        if ($result['collection']['status'] === YandexMapsParser::COLLECTION_SUSPICIOUS) {
-            $reason = match ($result['collection']['stop_reason']) {
-                'empty_page' => 'Яндекс вернул пустую страницу до ожидаемого конца.',
-                'repeated_page' => 'Яндекс повторил уже полученную страницу отзывов.',
-                'max_pages_reached' => 'Достигнут лимит страниц до полного результата.',
-                default => 'Причина обрыва не определена.',
-            };
+            if ($result['collection']['status'] === YandexMapsParser::COLLECTION_SUSPICIOUS) {
+                $reason = match ($result['collection']['stop_reason']) {
+                    'empty_page' => 'Яндекс вернул пустую страницу до ожидаемого конца.',
+                    'repeated_page' => 'Яндекс повторил уже полученную страницу отзывов.',
+                    'max_pages_reached' => 'Достигнут лимит страниц до полного результата.',
+                    default => 'Причина обрыва не определена.',
+                };
 
-            throw new RuntimeException("Сбор отзывов подозрительно оборвался: {$reason}");
+                throw new RuntimeException("Сбор отзывов подозрительно оборвался: {$reason}");
+            }
+        } catch (Throwable $exception) {
+            Log::warning('Сбой синхронизации отзывов Яндекс Карт.', [
+                'business_id' => $organization->business_id,
+                'page' => $organization->processed_pages + 1,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
         }
 
         DB::transaction(function () use ($result): void {

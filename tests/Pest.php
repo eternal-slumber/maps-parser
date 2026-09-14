@@ -44,7 +44,14 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/** @param list<array<string, mixed>> $businesses */
+function yandexStateHtml(array $businesses): string
 {
-    // ..
+    return '<script type="application/json" class="state-view">'
+        .json_encode([
+            'stack' => [[
+                'results' => ['items' => $businesses],
+            ]],
+        ], JSON_THROW_ON_ERROR)
+        .'</script>';
 }

@@ -3,7 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\User;
-use App\Services\YandexMapsParser;
+use App\Services\YandexMapsUrlResolver;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -23,7 +23,7 @@ final class StoreOrganizationRequest extends FormRequest
     /**
      * @return array<string, ValidationRule|array<mixed>|string>
      */
-    public function rules(YandexMapsParser $parser): array
+    public function rules(YandexMapsUrlResolver $urlResolver): array
     {
         return [
             'url' => [
@@ -32,13 +32,13 @@ final class StoreOrganizationRequest extends FormRequest
                 'string',
                 'max:2048',
                 'url:http,https',
-                function (string $attribute, mixed $value, Closure $fail) use ($parser): void {
+                function (string $attribute, mixed $value, Closure $fail) use ($urlResolver): void {
                     if (! is_string($value)) {
                         return;
                     }
 
                     try {
-                        $this->businessId = $parser->resolveBusinessId($value);
+                        $this->businessId = $urlResolver->resolveBusinessId($value);
                     } catch (InvalidArgumentException) {
                         $fail('Укажите ссылку на организацию в Яндекс Картах.');
                     } catch (RuntimeException) {
