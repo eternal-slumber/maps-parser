@@ -3,6 +3,7 @@
 use App\Jobs\SyncYandexOrganization;
 use App\Models\Organization;
 use App\Models\Review;
+use App\Services\YandexMapsParser;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -69,6 +70,7 @@ it('updates seen reviews and deactivates reviews missing from a later sync', fun
         ->last_synced_at->not->toBeNull();
     expect($organization->reviews()->count())->toBe(2);
 
+    $organization->update(['sync_status' => Organization::SYNC_PENDING]);
     SyncYandexOrganization::dispatchSync($organization->id);
 
     expect($organization->refresh()->rating)->toBe(4.5);
@@ -212,4 +214,47 @@ it('ignores a queued synchronization after its organization was deleted', functi
     SyncYandexOrganization::dispatchSync($organizationId);
 
     $this->assertModelMissing($organization);
+});
+
+it('ignores a duplicate first attempt after synchronization has started', function () {
+    Http::preventStrayRequests();
+    $organization = Organization::factory()->create([
+        'sync_status' => Organization::SYNC_PROCESSING,
+        'processed_pages' => 3,
+        'processed_reviews' => 150,
+    ]);
+
+    SyncYandexOrganization::dispatchSync($organization->id);
+
+    expect($organization->refresh())
+        ->sync_status->toBe(Organization::SYNC_PROCESSING)
+        ->processed_pages->toBe(3)
+        ->processed_reviews->toBe(150);
+});
+
+it('continues a retry for a processing organization', function () {
+    Http::preventStrayRequests();
+    Http::fake([
+        'https://yandex.ru/maps/org/134528915428/reviews/*' => Http::response(yandexStateHtml([[
+            'type' => 'business',
+            'id' => '134528915428',
+            'title' => 'Дебри',
+            'ratingData' => [
+                'ratingCount' => 0,
+                'ratingValue' => 0,
+                'reviewCount' => 0,
+            ],
+        ]])),
+    ]);
+    $organization = Organization::factory()->create([
+        'source_url' => 'https://yandex.ru/maps/org/134528915428/',
+        'business_id' => '134528915428',
+        'sync_status' => Organization::SYNC_PROCESSING,
+    ]);
+    $job = (new SyncYandexOrganization($organization->id))->withFakeQueueInteractions();
+    $job->job->attempts = 2;
+
+    $job->handle(app(YandexMapsParser::class));
+
+    expect($organization->refresh()->sync_status)->toBe(Organization::SYNC_COMPLETED);
 });

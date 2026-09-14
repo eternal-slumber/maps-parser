@@ -4,6 +4,7 @@ use App\Jobs\SyncYandexOrganization;
 use App\Models\Organization;
 use App\Models\Review;
 use App\Models\User;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
@@ -80,6 +81,26 @@ it('stores an organization and dispatches its synchronization', function () {
         SyncYandexOrganization::class,
         fn (SyncYandexOrganization $job): bool => $job->organizationId === $response->json('data.id'),
     );
+});
+
+it('marks the organization as failed when queue dispatch fails', function () {
+    $user = User::factory()->create();
+    Bus::shouldReceive('dispatch')
+        ->once()
+        ->andThrow(new RuntimeException('Redis unavailable.'));
+
+    $this->actingAs($user)
+        ->postJson(route('organizations.store'), [
+            'url' => 'https://yandex.ru/maps/org/debri/134528915428/reviews/',
+        ])
+        ->assertInternalServerError();
+
+    $this->assertDatabaseHas('organizations', [
+        'user_id' => $user->id,
+        'business_id' => '134528915428',
+        'sync_status' => Organization::SYNC_FAILED,
+        'sync_error' => 'Не удалось поставить синхронизацию в очередь.',
+    ]);
 });
 
 it('allows different users to import the same organization', function () {

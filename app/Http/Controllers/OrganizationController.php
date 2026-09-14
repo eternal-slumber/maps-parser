@@ -10,7 +10,9 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Bus;
 use Symfony\Component\HttpFoundation\Response;
+use Throwable;
 
 final class OrganizationController extends Controller
 {
@@ -57,7 +59,19 @@ final class OrganizationController extends Controller
         }
 
         if ($shouldDispatch) {
-            SyncYandexOrganization::dispatch($organization->id);
+            try {
+                Bus::dispatch(new SyncYandexOrganization($organization->id));
+            } catch (Throwable $exception) {
+                $organizations
+                    ->whereKey($organization->id)
+                    ->where('sync_status', Organization::SYNC_PENDING)
+                    ->update([
+                        'sync_status' => Organization::SYNC_FAILED,
+                        'sync_error' => 'Не удалось поставить синхронизацию в очередь.',
+                    ]);
+
+                throw $exception;
+            }
         }
 
         return OrganizationResource::make($organization->refresh())

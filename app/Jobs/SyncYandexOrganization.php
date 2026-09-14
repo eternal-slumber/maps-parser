@@ -37,12 +37,25 @@ class SyncYandexOrganization implements ShouldQueue
             return;
         }
 
-        $organization->update([
-            'sync_status' => Organization::SYNC_PROCESSING,
-            'processed_pages' => 0,
-            'processed_reviews' => 0,
-            'sync_error' => null,
-        ]);
+        if ($this->attempts() === 1) {
+            $claimed = Organization::query()
+                ->whereKey($organization->id)
+                ->where('sync_status', Organization::SYNC_PENDING)
+                ->update([
+                    'sync_status' => Organization::SYNC_PROCESSING,
+                    'processed_pages' => 0,
+                    'processed_reviews' => 0,
+                    'sync_error' => null,
+                ]) === 1;
+
+            if (! $claimed) {
+                return;
+            }
+
+            $organization->refresh();
+        } elseif ($organization->sync_status !== Organization::SYNC_PROCESSING) {
+            return;
+        }
 
         try {
             $result = $parser->fetch(

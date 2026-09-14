@@ -64,18 +64,18 @@ cp .env.example .env
 
 Готовые локальные значения находятся в `.env.example`. Основные настройки:
 
-| Переменная | Назначение | Значение для Sail |
-| --- | --- | --- |
-| `APP_URL` | URL приложения | `http://localhost:8000` |
-| `APP_PORT` | опубликованный HTTP-порт | `8000` |
-| `DB_HOST` | MySQL-контейнер | `mysql` |
-| `DB_DATABASE` | база приложения | `laravel` |
-| `DB_USERNAME` | пользователь MySQL | `sail` |
-| `DB_PASSWORD` | пароль MySQL | `password` |
-| `QUEUE_CONNECTION` | драйвер очереди | `redis` |
-| `CACHE_STORE` | драйвер кэша | `redis` |
-| `SESSION_DRIVER` | хранилище сессий | `database` |
-| `REDIS_HOST` | Redis-контейнер | `redis` |
+| Переменная         | Назначение               | Значение для Sail       |
+| ------------------ | ------------------------ | ----------------------- |
+| `APP_URL`          | URL приложения           | `http://localhost:8000` |
+| `APP_PORT`         | опубликованный HTTP-порт | `8000`                  |
+| `DB_HOST`          | MySQL-контейнер          | `mysql`                 |
+| `DB_DATABASE`      | база приложения          | `laravel`               |
+| `DB_USERNAME`      | пользователь MySQL       | `sail`                  |
+| `DB_PASSWORD`      | пароль MySQL             | `password`              |
+| `QUEUE_CONNECTION` | драйвер очереди          | `redis`                 |
+| `CACHE_STORE`      | драйвер кэша             | `redis`                 |
+| `SESSION_DRIVER`   | хранилище сессий         | `database`              |
+| `REDIS_HOST`       | Redis-контейнер          | `redis`                 |
 
 Секреты или токены Яндекс Карт не требуются: парсер работает с публичными HTML-страницами.
 
@@ -157,6 +157,8 @@ cp .env.example .env
 Реализовано:
 
 - атомарный переход статуса в `pending`, чтобы повторный запрос не сбрасывал активный импорт и не создавал параллельную job;
+- перевод в `failed`, если job не удалось отправить в Redis, чтобы повторный запрос мог запустить импорт;
+- атомарный `pending → processing` в worker: дубль job не запускает повторный обход, а queue-retry продолжает начатую синхронизацию;
 - до четырёх попыток с паузами 10, 30 и 60 секунд;
 - таймаут job 300 секунд;
 - HTTP connect timeout 5 секунд и общий timeout 20 секунд;
