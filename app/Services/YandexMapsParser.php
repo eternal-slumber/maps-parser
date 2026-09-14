@@ -169,6 +169,7 @@ final class YandexMapsParser
         ?int $expectedReviewCount = null,
     ): array {
         $reviewsById = [];
+        $receivedReviewCount = 0;
 
         if ($expectedReviewCount === 0) {
             return [
@@ -210,6 +211,8 @@ final class YandexMapsParser
                 ];
             }
 
+            $receivedReviewCount += count($pageReviews);
+
             $onPageProcessed?->__invoke(
                 $page,
                 count($reviewsById),
@@ -223,7 +226,7 @@ final class YandexMapsParser
                 ];
             }
 
-            if (count($reviewsById) >= self::MAX_AVAILABLE_REVIEWS) {
+            if ($receivedReviewCount >= self::MAX_AVAILABLE_REVIEWS) {
                 return [
                     'reviews' => array_values($reviewsById),
                     'status' => self::COLLECTION_SOURCE_LIMITED,

@@ -27,6 +27,7 @@ final class ReviewController extends Controller
         );
 
         $reviews = $organization->reviews()
+            ->where('is_active', true)
             ->latest('published_at')
             ->latest('id');
 

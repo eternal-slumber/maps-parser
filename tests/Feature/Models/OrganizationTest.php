@@ -23,12 +23,13 @@ it('deletes reviews when their organization is deleted', function () {
     $this->assertModelMissing($review);
 });
 
-it('rejects duplicate business ids', function () {
-    $organization = Organization::factory()->create([
+it('rejects duplicate business ids for one user', function () {
+    $user = User::factory()->create();
+    $organization = Organization::factory()->for($user)->create([
         'business_id' => '134528915428',
     ]);
 
-    expect(fn () => Organization::factory()->create([
+    expect(fn () => Organization::factory()->for($user)->create([
         'business_id' => $organization->business_id,
     ]))->toThrow(QueryException::class);
 });
@@ -48,4 +49,17 @@ it('rejects duplicate review ids only within one organization', function () {
     expect(fn () => Review::factory()->for($firstOrganization)->create([
         'external_id' => 'review-1',
     ]))->toThrow(QueryException::class);
+});
+
+it('treats review ids as case-sensitive', function () {
+    $organization = Organization::factory()->create();
+    Review::factory()->for($organization)->create([
+        'external_id' => 'CaseSensitiveId',
+    ]);
+
+    $review = Review::factory()->for($organization)->create([
+        'external_id' => 'casesensitiveid',
+    ]);
+
+    $this->assertModelExists($review);
 });

@@ -4,6 +4,29 @@ declare(strict_types=1);
 
 use App\Services\YandexMapsPageParser;
 
+it('parses an anonymized real Yandex SSR page', function () {
+    $result = app(YandexMapsPageParser::class)->parse(
+        (string) file_get_contents(base_path('tests/Fixtures/Yandex/reviews-page.html')),
+        '123',
+    );
+
+    expect($result['organization'])->toBe([
+        'business_id' => '123',
+        'name' => 'Anonymous organization',
+        'rating' => 4.5,
+        'rating_count' => 100,
+        'review_count' => 50,
+    ]);
+    expect($result['reviews'])->toHaveCount(50);
+    expect($result['reviews'][0])->toBe([
+        'external_id' => 'anonymous-review-01',
+        'author_name' => 'anonymized',
+        'text' => 'anonymized',
+        'rating' => 1,
+        'updated_time' => '2026-01-01T00:00:00.000Z',
+    ]);
+});
+
 it('returns no reviews from an explicitly empty reviews array', function () {
     $reviews = app(YandexMapsPageParser::class)->parseReviews(
         yandexStateHtml([[
@@ -75,7 +98,7 @@ it('rejects multiple review arrays inside the requested business', function () {
     ]]);
 
     expect(fn () => app(YandexMapsPageParser::class)->parseReviews($html, '123'))
-        ->toThrow(RuntimeException::class, 'Найдено несколько массивов отзывов организации.');
+        ->toThrow(UnexpectedValueException::class, 'Найдено несколько массивов отзывов организации.');
 });
 
 it('rejects multiple businesses with the requested id', function () {

@@ -23,6 +23,7 @@ it('returns reviews 50 per page from newest to oldest', function () {
             'published_at' => now()->subMinutes($sequence->index),
         ])
         ->create();
+    Review::factory()->for($organization)->create(['is_active' => false]);
 
     $this->actingAs($user)
         ->getJson(route('organizations.reviews.index', $organization))

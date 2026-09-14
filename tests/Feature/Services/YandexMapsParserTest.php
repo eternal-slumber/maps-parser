@@ -300,14 +300,24 @@ it('reports empty, repeated, and max-page stops as suspicious', function (
     'max pages' => ['max_pages', 1, 1, 'max_pages_reached'],
 ]);
 
-it('reports the Yandex limit when fewer reviews are available than reported', function () {
+it('stops at the Yandex limit when shifted pagination contains a duplicate', function () {
     Http::preventStrayRequests();
     Http::fake(function (Request $request): PromiseInterface {
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
         $page = (int) ($query['page'] ?? 1);
+
+        if ($page > 12) {
+            return Http::response(yandexStateHtml([[
+                'type' => 'business',
+                'id' => '134528915428',
+            ]]));
+        }
+
         $reviews = array_map(
             fn (int $index): array => [
-                'reviewId' => "review-{$page}-{$index}",
+                'reviewId' => $page === 12 && $index === 50
+                    ? 'review-1-1'
+                    : "review-{$page}-{$index}",
                 'rating' => 5,
                 'updatedTime' => '2026-09-11T12:00:00.000Z',
             ],
@@ -338,7 +348,7 @@ it('reports the Yandex limit when fewer reviews are available than reported', fu
         20,
     );
 
-    expect($result['reviews'])->toHaveCount(600);
+    expect($result['reviews'])->toHaveCount(599);
     expect($result['collection'])->toBe([
         'status' => YandexMapsParser::COLLECTION_SOURCE_LIMITED,
         'stop_reason' => 'source_limit_reached',

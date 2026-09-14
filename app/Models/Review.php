@@ -17,6 +17,8 @@ use Illuminate\Support\Carbon;
  * @property string|null $text
  * @property int $rating
  * @property Carbon $published_at
+ * @property bool $is_active
+ * @property Carbon|null $last_seen_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read Organization $organization
@@ -28,6 +30,8 @@ use Illuminate\Support\Carbon;
     'text',
     'rating',
     'published_at',
+    'is_active',
+    'last_seen_at',
 ])]
 class Review extends Model
 {
@@ -50,6 +54,8 @@ class Review extends Model
         return [
             'rating' => 'integer',
             'published_at' => 'datetime',
+            'is_active' => 'boolean',
+            'last_seen_at' => 'datetime',
         ];
     }
 }

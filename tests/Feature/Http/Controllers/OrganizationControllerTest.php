@@ -82,6 +82,30 @@ it('stores an organization and dispatches its synchronization', function () {
     );
 });
 
+it('allows different users to import the same organization', function () {
+    $firstUser = User::factory()->create();
+    $secondUser = User::factory()->create();
+    Queue::fake([SyncYandexOrganization::class]);
+    $url = 'https://yandex.ru/maps/org/debri/134528915428/reviews/';
+
+    $this->actingAs($firstUser)
+        ->postJson(route('organizations.store'), ['url' => $url])
+        ->assertAccepted();
+    $this->actingAs($secondUser)
+        ->postJson(route('organizations.store'), ['url' => $url])
+        ->assertAccepted();
+
+    $this->assertDatabaseHas('organizations', [
+        'user_id' => $firstUser->id,
+        'business_id' => '134528915428',
+    ]);
+    $this->assertDatabaseHas('organizations', [
+        'user_id' => $secondUser->id,
+        'business_id' => '134528915428',
+    ]);
+    Queue::assertPushed(SyncYandexOrganization::class, 2);
+});
+
 it('accepts a short organization link and stores its canonical url', function () {
     $user = User::factory()->create();
     Queue::fake([SyncYandexOrganization::class]);
@@ -108,15 +132,50 @@ it('accepts a short organization link and stores its canonical url', function ()
     Queue::assertPushed(SyncYandexOrganization::class);
 });
 
-it('updates the same organization instead of creating a duplicate', function () {
+it('restarts a completed organization sync without creating a duplicate', function () {
     $user = User::factory()->create();
     Queue::fake([SyncYandexOrganization::class]);
     $url = 'https://yandex.ru/maps/org/debri/134528915428/reviews/';
+    $organization = Organization::factory()->for($user)->create([
+        'business_id' => '134528915428',
+        'sync_status' => Organization::SYNC_COMPLETED,
+        'processed_pages' => 12,
+        'processed_reviews' => 600,
+    ]);
 
-    $this->actingAs($user)->postJson(route('organizations.store'), ['url' => $url]);
-    $this->actingAs($user)->postJson(route('organizations.store'), ['url' => $url]);
+    $this->actingAs($user)
+        ->postJson(route('organizations.store'), ['url' => $url])
+        ->assertAccepted()
+        ->assertJsonPath('data.id', $organization->id)
+        ->assertJsonPath('data.sync_status', Organization::SYNC_PENDING)
+        ->assertJsonPath('data.processed_pages', 0)
+        ->assertJsonPath('data.processed_reviews', 0);
 
     expect($user->organizations()->count())->toBe(1);
+    Queue::assertPushed(SyncYandexOrganization::class, 1);
+});
+
+it('keeps active synchronization progress and does not dispatch a duplicate', function () {
+    $user = User::factory()->create();
+    Queue::fake([SyncYandexOrganization::class]);
+    $organization = Organization::factory()->for($user)->create([
+        'business_id' => '134528915428',
+        'sync_status' => Organization::SYNC_PROCESSING,
+        'processed_pages' => 3,
+        'processed_reviews' => 150,
+    ]);
+
+    $this->actingAs($user)
+        ->postJson(route('organizations.store'), [
+            'url' => 'https://yandex.ru/maps/org/debri/134528915428/reviews/',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('data.id', $organization->id)
+        ->assertJsonPath('data.sync_status', Organization::SYNC_PROCESSING)
+        ->assertJsonPath('data.processed_pages', 3)
+        ->assertJsonPath('data.processed_reviews', 150);
+
+    Queue::assertNothingPushed();
 });
 
 it('returns synchronization status to the organization owner', function () {

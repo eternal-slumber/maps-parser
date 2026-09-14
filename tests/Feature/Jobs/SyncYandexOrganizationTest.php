@@ -2,20 +2,25 @@
 
 use App\Jobs\SyncYandexOrganization;
 use App\Models\Organization;
+use App\Models\Review;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
-it('stores parser results and updates existing reviews without duplicates', function () {
-    $organizationPage = fn (float $rating, string $reviewText): string => yandexStateHtml([[
+it('updates seen reviews and deactivates reviews missing from a later sync', function () {
+    $organizationPage = fn (
+        float $rating,
+        string $reviewText,
+        int $reviewCount,
+    ): string => yandexStateHtml([[
         'type' => 'business',
         'id' => '134528915428',
         'title' => 'Дебри',
         'ratingData' => [
             'ratingCount' => 100,
             'ratingValue' => $rating,
-            'reviewCount' => 2,
+            'reviewCount' => $reviewCount,
         ],
         'reviewResults' => ['reviews' => [[
             'reviewId' => 'review-1',
@@ -40,10 +45,9 @@ it('stores parser results and updates existing reviews without duplicates', func
 
     Http::preventStrayRequests();
     Http::fakeSequence('https://yandex.ru/maps/org/134528915428/reviews/*')
-        ->push($organizationPage(4.2, 'Первоначальный текст'))
+        ->push($organizationPage(4.2, 'Первоначальный текст', 2))
         ->push($reviewPage('review-2'))
-        ->push($organizationPage(4.5, 'Обновлённый текст'))
-        ->push($reviewPage('review-2'));
+        ->push($organizationPage(4.5, 'Обновлённый текст', 1));
 
     $organization = Organization::factory()->create([
         'source_url' => 'https://yandex.ru/maps/org/debri/134528915428/reviews/',
@@ -69,8 +73,12 @@ it('stores parser results and updates existing reviews without duplicates', func
 
     expect($organization->refresh()->rating)->toBe(4.5);
     expect($organization->reviews()->count())->toBe(2);
-    expect($organization->reviews()->where('external_id', 'review-1')->value('text'))
-        ->toBe('Обновлённый текст');
+    expect($organization->reviews()->where('external_id', 'review-1')->first())
+        ->text->toBe('Обновлённый текст')
+        ->is_active->toBeTrue()
+        ->last_seen_at->not->toBeNull();
+    expect($organization->reviews()->where('external_id', 'review-2')->first())
+        ->is_active->toBeFalse();
 });
 
 it('records the final queue failure on the organization', function () {
@@ -84,6 +92,18 @@ it('records the final queue failure on the organization', function () {
     expect($organization->refresh())
         ->sync_status->toBe(Organization::SYNC_FAILED)
         ->sync_error->toBe('Яндекс временно недоступен.');
+});
+
+it('fails schema exceptions without retrying', function () {
+    $job = (new SyncYandexOrganization(1))->withFakeQueueInteractions();
+    $exception = new UnexpectedValueException('Яндекс изменил схему.');
+
+    expect(fn () => $job->middleware()[0]->handle(
+        $job,
+        fn () => throw $exception,
+    ))->toThrow($exception);
+
+    $job->assertFailedWith($exception);
 });
 
 it('does not complete a suspiciously truncated import', function () {
@@ -115,6 +135,9 @@ it('does not complete a suspiciously truncated import', function () {
         'source_url' => 'https://yandex.ru/maps/org/134528915428/',
         'business_id' => '134528915428',
     ]);
+    $existingReview = Review::factory()->for($organization)->create([
+        'external_id' => 'existing-review',
+    ]);
     Log::shouldReceive('warning')->once()->with(
         'Сбой синхронизации отзывов Яндекс Карт.',
         [
@@ -130,7 +153,8 @@ it('does not complete a suspiciously truncated import', function () {
     expect($organization->refresh())
         ->sync_status->toBe(Organization::SYNC_FAILED)
         ->sync_error->toContain('Сбор отзывов подозрительно оборвался');
-    expect($organization->reviews()->count())->toBe(0);
+    expect($existingReview->refresh()->is_active)->toBeTrue();
+    expect($organization->reviews()->where('external_id', 'review-1')->exists())->toBeFalse();
 });
 
 it('marks an import as limited when Yandex provides 600 of more reported reviews', function () {

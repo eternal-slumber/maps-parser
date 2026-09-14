@@ -21,6 +21,7 @@ type Organization = {
     processed_pages: number;
     processed_reviews: number;
     sync_error: string | null;
+    last_synced_at: string | null;
 };
 
 type OrganizationResponse = {
@@ -79,8 +80,13 @@ const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
 const isSyncing = computed(() =>
     ['pending', 'processing'].includes(organization.value?.sync_status ?? ''),
 );
-const hasFinishedSync = computed(() =>
-    ['completed', 'limited'].includes(organization.value?.sync_status ?? ''),
+const canLoadReviews = computed(
+    () =>
+        ['completed', 'limited'].includes(
+            organization.value?.sync_status ?? '',
+        ) ||
+        (organization.value?.sync_status === 'failed' &&
+            organization.value.last_synced_at !== null),
 );
 
 const statusLabel = computed(() => {
@@ -143,11 +149,9 @@ async function poll(): Promise<void> {
                 organization.value = response.data;
                 requestError.value = null;
 
-                if (hasFinishedSync.value) {
+                if (canLoadReviews.value) {
                     void loadReviews();
                 }
-
-                schedulePoll();
             },
             onHttpException: () => {
                 requestError.value = 'Не удалось обновить статус.';
@@ -157,7 +161,11 @@ async function poll(): Promise<void> {
             },
         });
     } catch {
-        clearPollTimer();
+        // Ошибка уже показана через useHttp.
+    } finally {
+        if (organization.value?.id === organizationId) {
+            schedulePoll();
+        }
     }
 }
 
@@ -171,7 +179,7 @@ function activateOrganization(selectedOrganization: Organization): void {
 
     if (isSyncing.value) {
         schedulePoll();
-    } else if (hasFinishedSync.value) {
+    } else if (canLoadReviews.value) {
         void loadReviews();
     }
 }
@@ -263,7 +271,7 @@ async function deleteOrganization(): Promise<void> {
 }
 
 async function loadReviews(page = 1): Promise<void> {
-    if (organization.value === null || !hasFinishedSync.value) {
+    if (organization.value === null || !canLoadReviews.value) {
         return;
     }
 
@@ -307,10 +315,7 @@ async function loadReviews(page = 1): Promise<void> {
 }
 
 async function submit(): Promise<void> {
-    clearPollTimer();
     requestError.value = null;
-    reviews.value = [];
-    pagination.value = null;
 
     try {
         await createRequest.post(store().url, {
@@ -535,7 +540,7 @@ onUnmounted(() => {
                 </p>
 
                 <div
-                    v-if="hasFinishedSync"
+                    v-if="canLoadReviews"
                     class="mt-10 border-t border-zinc-200 pt-10"
                 >
                     <div

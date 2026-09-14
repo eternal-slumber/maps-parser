@@ -7,7 +7,7 @@ namespace App\Services;
 use DateTimeImmutable;
 use DateTimeZone;
 use JsonException;
-use RuntimeException;
+use UnexpectedValueException;
 
 final class YandexMapsPageParser
 {
@@ -81,11 +81,11 @@ final class YandexMapsPageParser
         $businesses = $this->findBusinesses($this->decode($html), $businessId);
 
         if ($businesses === []) {
-            throw new RuntimeException('Организация не найдена в состоянии страницы.');
+            throw new UnexpectedValueException('Организация не найдена в состоянии страницы.');
         }
 
         if (count($businesses) > 1) {
-            throw new RuntimeException('Найдено несколько организаций с указанным businessId.');
+            throw new UnexpectedValueException('Найдено несколько организаций с указанным businessId.');
         }
 
         return $businesses[0];
@@ -99,17 +99,17 @@ final class YandexMapsPageParser
             $html,
             $matches,
         ) !== 1) {
-            throw new RuntimeException('Состояние страницы организации не найдено.');
+            throw new UnexpectedValueException('Состояние страницы организации не найдено.');
         }
 
         try {
             $state = json_decode($matches[2], true, flags: JSON_THROW_ON_ERROR);
         } catch (JsonException $exception) {
-            throw new RuntimeException('Не удалось декодировать состояние страницы.', 0, $exception);
+            throw new UnexpectedValueException('Не удалось декодировать состояние страницы.', 0, $exception);
         }
 
         if (! is_array($state)) {
-            throw new RuntimeException('Состояние страницы имеет некорректный формат.');
+            throw new UnexpectedValueException('Состояние страницы имеет некорректный формат.');
         }
 
         return $state;
@@ -163,7 +163,7 @@ final class YandexMapsPageParser
             || ! array_key_exists('ratingCount', $ratingData)
             || ! array_key_exists('reviewCount', $ratingData)
         ) {
-            throw new RuntimeException('Данные организации неполные.');
+            throw new UnexpectedValueException('Данные организации неполные.');
         }
 
         $rating = $ratingData['ratingValue'];
@@ -181,7 +181,7 @@ final class YandexMapsPageParser
             || ! is_int($reviewCount)
             || $reviewCount < 0
         ) {
-            throw new RuntimeException('Данные организации имеют некорректный формат.');
+            throw new UnexpectedValueException('Данные организации имеют некорректный формат.');
         }
 
         return [
@@ -208,13 +208,13 @@ final class YandexMapsPageParser
         $candidates = $this->findReviewCandidates($business);
 
         if ($candidates === []) {
-            throw new RuntimeException(
+            throw new UnexpectedValueException(
                 'Отзывы не найдены: возможно, Яндекс изменил структуру страницы.',
             );
         }
 
         if (count($candidates) > 1) {
-            throw new RuntimeException('Найдено несколько массивов отзывов организации.');
+            throw new UnexpectedValueException('Найдено несколько массивов отзывов организации.');
         }
 
         return array_map(
@@ -263,12 +263,12 @@ final class YandexMapsPageParser
     private function normalizeReview(mixed $review): array
     {
         if (! is_array($review)) {
-            throw new RuntimeException('Отзыв имеет некорректный формат.');
+            throw new UnexpectedValueException('Отзыв имеет некорректный формат.');
         }
 
         foreach (['reviewId', 'rating', 'updatedTime'] as $requiredField) {
             if (! array_key_exists($requiredField, $review)) {
-                throw new RuntimeException(
+                throw new UnexpectedValueException(
                     "В отзыве отсутствует поле {$requiredField}.",
                 );
             }
@@ -289,7 +289,7 @@ final class YandexMapsPageParser
             || ($author !== null && ! is_array($author))
             || (is_array($author) && isset($author['name']) && ! is_string($author['name']))
         ) {
-            throw new RuntimeException('Отзыв имеет некорректный формат.');
+            throw new UnexpectedValueException('Отзыв имеет некорректный формат.');
         }
 
         return [

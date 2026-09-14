@@ -5,25 +5,24 @@ namespace App\Jobs;
 use App\Models\Organization;
 use App\Models\Review;
 use App\Services\YandexMapsParser;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\Middleware\FailOnException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
+use UnexpectedValueException;
 
-class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
+class SyncYandexOrganization implements ShouldQueue
 {
     use Queueable;
 
     public int $tries = 4;
 
     public int $timeout = 300;
-
-    public int $uniqueFor = 1800;
 
     public function __construct(public int $organizationId)
     {
@@ -114,9 +113,10 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
         return [10, 30, 60];
     }
 
-    public function uniqueId(): string
+    /** @return list<object> */
+    public function middleware(): array
     {
-        return (string) $this->organizationId;
+        return [new FailOnException([UnexpectedValueException::class])];
     }
 
     public function failed(?Throwable $exception): void
@@ -143,6 +143,10 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
      */
     private function upsertReviews(Organization $organization, array $reviews): void
     {
+        $seenAt = now();
+
+        $organization->reviews()->update(['is_active' => false]);
+
         $rows = array_map(
             fn (array $review): array => [
                 'organization_id' => $organization->id,
@@ -151,6 +155,8 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
                 'text' => $review['text'],
                 'rating' => $review['rating'],
                 'published_at' => Carbon::parse($review['updated_time'])->utc(),
+                'is_active' => true,
+                'last_seen_at' => $seenAt,
             ],
             $reviews,
         );
@@ -158,7 +164,7 @@ class SyncYandexOrganization implements ShouldBeUnique, ShouldQueue
         Review::query()->upsert(
             $rows,
             ['organization_id', 'external_id'],
-            ['author_name', 'text', 'rating', 'published_at'],
+            ['author_name', 'text', 'rating', 'published_at', 'is_active', 'last_seen_at'],
         );
     }
 }

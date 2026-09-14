@@ -27,7 +27,8 @@ final class OrganizationController extends Controller
 
     public function store(StoreOrganizationRequest $request): JsonResponse
     {
-        $organization = $this->user($request)->organizations()->updateOrCreate(
+        $organizations = $this->user($request)->organizations();
+        $organization = $organizations->firstOrCreate(
             ['business_id' => $request->businessId()],
             [
                 'source_url' => $request->organizationUrl(),
@@ -38,9 +39,28 @@ final class OrganizationController extends Controller
             ],
         );
 
-        SyncYandexOrganization::dispatch($organization->id);
+        $shouldDispatch = $organization->wasRecentlyCreated;
 
-        return OrganizationResource::make($organization)
+        if (! $shouldDispatch) {
+            $shouldDispatch = $organizations
+                ->whereKey($organization->id)
+                ->whereNotIn('sync_status', [
+                    Organization::SYNC_PENDING,
+                    Organization::SYNC_PROCESSING,
+                ])
+                ->update([
+                    'sync_status' => Organization::SYNC_PENDING,
+                    'processed_pages' => 0,
+                    'processed_reviews' => 0,
+                    'sync_error' => null,
+                ]) === 1;
+        }
+
+        if ($shouldDispatch) {
+            SyncYandexOrganization::dispatch($organization->id);
+        }
+
+        return OrganizationResource::make($organization->refresh())
             ->response()
             ->setStatusCode(Response::HTTP_ACCEPTED);
     }
