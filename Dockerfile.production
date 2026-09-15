@@ -1,0 +1,26 @@
+FROM node:22-bookworm-slim AS node
+
+FROM serversideup/php:8.4-fpm-nginx AS builder
+
+USER root
+COPY --from=node /usr/local/ /usr/local/
+
+WORKDIR /var/www/html
+
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN composer dump-autoload --no-dev --optimize \
+    && npm run build \
+    && rm -rf node_modules
+
+FROM serversideup/php:8.4-fpm-nginx
+
+USER root
+COPY --from=builder --chown=www-data:www-data /var/www/html /var/www/html
+RUN chmod -R ug+rwX storage bootstrap/cache
+USER www-data

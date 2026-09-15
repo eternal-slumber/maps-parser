@@ -1,12 +1,14 @@
 services:
     app:
-        image: serversideup/php:8.4-fpm-nginx
+        build:
+            context: .
+            dockerfile: Dockerfile.production
+        image: review-parser-app
         container_name: review-parser-app
-        working_dir: /var/www/html
         ports:
             - '127.0.0.1:${APP_HTTP_PORT:-8082}:8080'
-        volumes:
-            - '.:/var/www/html'
+        env_file:
+            - '.env'
         environment:
             PHP_OPCACHE_ENABLE: '1'
         depends_on:
@@ -17,8 +19,7 @@ services:
         restart: unless-stopped
 
     queue:
-        image: serversideup/php:8.4-fpm-nginx
-        working_dir: /var/www/html
+        image: review-parser-app
         command:
             - php
             - artisan
@@ -28,8 +29,8 @@ services:
             - --tries=4
             - --timeout=300
             - --max-time=3600
-        volumes:
-            - '.:/var/www/html'
+        env_file:
+            - '.env'
         environment:
             PHP_OPCACHE_ENABLE: '1'
         depends_on:
