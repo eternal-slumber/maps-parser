@@ -8,6 +8,15 @@ it('redirects guests from the import page to login', function () {
     $this->get(route('home'))->assertRedirectToRoute('login');
 });
 
+it('keeps guest redirects on https behind the reverse proxy', function () {
+    $this->withServerVariables([
+        'HTTP_HOST' => 'reviews.mycaloriebot.ru',
+        'REMOTE_ADDR' => '172.18.0.1',
+    ])->withHeader('X-Forwarded-Proto', 'https')
+        ->get('/')
+        ->assertRedirect('https://localhost:8000/login');
+});
+
 it('shows the login page to guests', function () {
     $this->get(route('login'))
         ->assertOk()
