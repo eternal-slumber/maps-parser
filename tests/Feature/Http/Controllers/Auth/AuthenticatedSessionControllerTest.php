@@ -15,15 +15,19 @@ it('shows the login page to guests', function () {
 });
 
 it('authenticates a user with valid credentials', function () {
+    $legacyUser = User::factory()->create(['email' => 'test@example.com']);
     $this->seed();
 
-    $user = User::query()->where('email', 'test@example.com')->firstOrFail();
+    $user = User::query()
+        ->where('email', 'review.parser.operator+local@demo.test')
+        ->firstOrFail();
 
     $this->post(route('login.store'), [
-        'email' => 'test@example.com',
-        'password' => 'password',
+        'email' => 'review.parser.operator+local@demo.test',
+        'password' => 'Rvp!2026_Local#Access9',
     ])->assertRedirectToRoute('home');
 
+    expect($user->is($legacyUser))->toBeTrue();
     $this->assertAuthenticatedAs($user);
 });
 

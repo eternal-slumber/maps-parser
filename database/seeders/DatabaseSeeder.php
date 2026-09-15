@@ -15,12 +15,16 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        User::query()->updateOrCreate(
-            ['email' => 'test@example.com'],
-            [
-                'name' => 'Test User',
-                'password' => 'password',
-            ],
-        );
+        $user = User::query()
+            ->where('email', 'review.parser.operator+local@demo.test')
+            ->first()
+            ?? User::query()->where('email', 'test@example.com')->first()
+            ?? new User;
+
+        $user->fill([
+            'name' => 'Review Parser Operator',
+            'email' => 'review.parser.operator+local@demo.test',
+            'password' => 'Rvp!2026_Local#Access9',
+        ])->save();
     }
 }

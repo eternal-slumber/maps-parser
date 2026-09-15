@@ -10,9 +10,6 @@ import { Form, Head } from '@inertiajs/vue3';
         <div class="mx-auto max-w-sm">
             <header class="mb-8">
                 <h1 class="text-3xl font-semibold tracking-tight">Вход</h1>
-                <p class="mt-3 text-sm leading-6 text-zinc-600">
-                    Тестовый пользователь: test@example.com / password
-                </p>
             </header>
 
             <Form
@@ -28,7 +25,6 @@ import { Form, Head } from '@inertiajs/vue3';
                         id="email"
                         type="email"
                         name="email"
-                        value="test@example.com"
                         required
                         autofocus
                         autocomplete="username"

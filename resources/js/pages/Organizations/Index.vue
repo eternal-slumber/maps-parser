@@ -12,6 +12,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 type Organization = {
     id: number;
+    url: string;
     business_id: string;
     name: string | null;
     rating: number;
@@ -56,6 +57,9 @@ type ReviewsResponse = {
 const createRequest = useHttp<{ url: string }, OrganizationResponse>({
     url: '',
 });
+const refreshRequest = useHttp<{ url: string }, OrganizationResponse>({
+    url: '',
+});
 const organizationsRequest = useHttp<
     Record<string, never>,
     OrganizationsResponse
@@ -94,9 +98,7 @@ const statusLabel = computed(() => {
         case 'pending':
             return 'Ожидает запуска';
         case 'processing':
-            return 'Загружаем отзывы';
-        case 'completed':
-            return 'Готово';
+            return 'Идёт импорт';
         case 'limited':
             return 'Получен доступный лимит';
         case 'failed':
@@ -104,6 +106,32 @@ const statusLabel = computed(() => {
         default:
             return '';
     }
+});
+
+const syncMessage = computed(() => {
+    if (organization.value?.sync_status === 'pending') {
+        return 'Подготавливаем импорт';
+    }
+
+    if ((organization.value?.processed_pages ?? 0) === 0) {
+        return 'Получаем профиль и оценки';
+    }
+
+    return 'Загружаем отзывы';
+});
+
+const syncProgress = computed(() => {
+    const processedPages = organization.value?.processed_pages ?? 0;
+
+    if (organization.value?.sync_status === 'pending') {
+        return 8;
+    }
+
+    if (processedPages === 0) {
+        return 20;
+    }
+
+    return Math.min(95, 20 + processedPages * 6);
 });
 
 const reviewPages = computed(() =>
@@ -231,7 +259,11 @@ async function deleteOrganization(): Promise<void> {
         organization.value.name ??
         `Организация ${organization.value.business_id}`;
 
-    if (!window.confirm(`Удалить «${organizationName}» и все её отзывы?`)) {
+    if (
+        !window.confirm(
+            `Удалить «${organizationName}» и все её отзывы? Это действие нельзя отменить.`,
+        )
+    ) {
         return;
     }
 
@@ -343,8 +375,47 @@ async function submit(): Promise<void> {
     }
 }
 
+async function refreshOrganization(): Promise<void> {
+    if (organization.value === null || isSyncing.value) {
+        return;
+    }
+
+    const organizationId = organization.value.id;
+    refreshRequest.url = organization.value.url;
+    requestError.value = null;
+
+    try {
+        await refreshRequest.post(store().url, {
+            onSuccess: (response) => {
+                organizations.value = organizations.value.map((item) =>
+                    item.id === response.data.id ? response.data : item,
+                );
+
+                if (organization.value?.id === organizationId) {
+                    activateOrganization(response.data);
+                }
+            },
+            onHttpException: () => {
+                requestError.value = 'Не удалось запустить обновление.';
+            },
+            onNetworkError: () => {
+                requestError.value = 'Нет соединения с сервером.';
+            },
+        });
+    } catch {
+        // Ошибка уже показана через useHttp.
+    }
+}
+
 function formatDate(date: string): string {
     return dateFormatter.format(new Date(date));
+}
+
+function formatDateTime(date: string): string {
+    return new Date(date).toLocaleString('ru-RU', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+    });
 }
 
 function reviewRatingClass(rating: number): string {
@@ -366,6 +437,7 @@ onMounted(() => {
 onUnmounted(() => {
     clearPollTimer();
     createRequest.cancel();
+    refreshRequest.cancel();
     organizationsRequest.cancel();
     statusRequest.cancel();
     reviewsRequest.cancel();
@@ -386,15 +458,15 @@ onUnmounted(() => {
                         Отзывы Яндекс Карт
                     </h1>
                     <p class="mt-3 max-w-xl text-base leading-7 text-zinc-600">
-                        Вставьте ссылку на организацию. Отзывы загрузятся в
-                        фоне.
+                        Вставьте ссылку на организацию, чтобы получить её
+                        рейтинг и отзывы.
                     </p>
                 </div>
                 <Link
                     :href="logout()"
                     method="post"
                     as="button"
-                    class="pt-2 text-sm text-zinc-600 hover:text-zinc-950 focus:underline focus:outline-none"
+                    class="shrink-0 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 focus:ring-2 focus:ring-zinc-950 focus:ring-offset-2 focus:outline-none"
                 >
                     Выйти
                 </Link>
@@ -473,21 +545,52 @@ onUnmounted(() => {
             </div>
 
             <section v-if="organization" class="pt-10" aria-live="polite">
-                <div class="flex items-start justify-between gap-4">
-                    <h2 class="text-xl font-semibold">
-                        {{
-                            organization.name ??
-                            `Организация ${organization.business_id}`
-                        }}
-                    </h2>
-                    <div class="flex items-center gap-4">
-                        <p class="text-sm font-medium text-zinc-600">
+                <div
+                    class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                    <div>
+                        <h2 class="text-xl font-semibold">
+                            {{
+                                organization.name ??
+                                `Организация ${organization.business_id}`
+                            }}
+                        </h2>
+                        <p
+                            v-if="organization.last_synced_at"
+                            class="mt-1 text-sm text-zinc-500"
+                        >
+                            Данные актуальны на
+                            {{ formatDateTime(organization.last_synced_at) }}
+                        </p>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                        <p
+                            v-if="statusLabel"
+                            class="text-sm font-medium text-zinc-600"
+                        >
                             {{ statusLabel }}
                         </p>
                         <button
                             type="button"
+                            :disabled="
+                                isSyncing ||
+                                createRequest.processing ||
+                                refreshRequest.processing ||
+                                deleteRequest.processing
+                            "
+                            class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:border-zinc-950 hover:text-zinc-950 focus:ring-2 focus:ring-zinc-950 focus:ring-offset-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            @click="refreshOrganization"
+                        >
+                            {{
+                                refreshRequest.processing
+                                    ? 'Запускаем…'
+                                    : 'Обновить'
+                            }}
+                        </button>
+                        <button
+                            type="button"
                             :disabled="deleteRequest.processing"
-                            class="text-sm text-red-700 hover:text-red-900 focus:underline focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            class="rounded-md border border-red-300 bg-white px-2 py-1.5 text-xs font-medium text-red-700 hover:border-red-700 hover:text-red-900 focus:ring-2 focus:ring-red-700 focus:ring-offset-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                             @click="deleteOrganization"
                         >
                             {{
@@ -520,11 +623,36 @@ onUnmounted(() => {
                     </div>
                 </dl>
 
-                <p v-if="isSyncing" class="mt-6 text-sm text-zinc-600">
-                    Обработано страниц: {{ organization.processed_pages }} ·
-                    отзывов:
-                    {{ organization.processed_reviews }}
-                </p>
+                <div v-if="isSyncing" class="mt-6" role="status">
+                    <div
+                        class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <p class="text-sm font-medium text-zinc-700">
+                            {{ syncMessage }}
+                        </p>
+                        <p class="text-sm text-zinc-500 tabular-nums">
+                            {{ organization.processed_pages }} стр. ·
+                            {{ organization.processed_reviews }} отзывов
+                        </p>
+                    </div>
+                    <div
+                        class="mt-3 h-2 overflow-hidden rounded-full bg-zinc-200"
+                        role="progressbar"
+                        :aria-valuenow="syncProgress"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        :aria-valuetext="syncMessage"
+                    >
+                        <div
+                            class="h-full rounded-full bg-zinc-950 transition-[width] duration-500"
+                            :class="{
+                                'animate-pulse':
+                                    organization.processed_pages === 0,
+                            }"
+                            :style="{ width: `${syncProgress}%` }"
+                        />
+                    </div>
+                </div>
                 <p
                     v-else-if="organization.sync_status === 'limited'"
                     class="mt-6 text-sm text-amber-700"
@@ -660,6 +788,15 @@ onUnmounted(() => {
                     </nav>
                 </div>
             </section>
+
+            <footer
+                class="mt-16 border-t border-zinc-200 pt-6 text-sm leading-6 text-zinc-500"
+            >
+                Учебный проект, выполненный в рамках тестового задания. Не
+                предназначен для коммерческого использования и не связан с
+                Яндексом. Данные используются только для демонстрации и могут
+                быть неполными или неактуальными.
+            </footer>
         </div>
     </main>
 </template>
