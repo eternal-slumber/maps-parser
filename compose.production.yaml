@@ -1,0 +1,81 @@
+services:
+    app:
+        image: serversideup/php:8.4-fpm-nginx
+        container_name: review-parser-app
+        working_dir: /var/www/html
+        ports:
+            - '127.0.0.1:${APP_HTTP_PORT:-8082}:8080'
+        volumes:
+            - '.:/var/www/html'
+        environment:
+            PHP_OPCACHE_ENABLE: '1'
+        depends_on:
+            mysql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        restart: unless-stopped
+
+    queue:
+        image: serversideup/php:8.4-fpm-nginx
+        working_dir: /var/www/html
+        command:
+            - php
+            - artisan
+            - queue:work
+            - redis
+            - --sleep=1
+            - --tries=4
+            - --timeout=300
+            - --max-time=3600
+        volumes:
+            - '.:/var/www/html'
+        environment:
+            PHP_OPCACHE_ENABLE: '1'
+        depends_on:
+            mysql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        restart: unless-stopped
+        stop_grace_period: 310s
+        healthcheck:
+            disable: true
+
+    mysql:
+        image: mysql:8.4
+        container_name: review-parser-mysql
+        environment:
+            MYSQL_ROOT_PASSWORD: '${DB_ROOT_PASSWORD}'
+            MYSQL_DATABASE: '${DB_DATABASE}'
+            MYSQL_USER: '${DB_USERNAME}'
+            MYSQL_PASSWORD: '${DB_PASSWORD}'
+        volumes:
+            - 'mysql_data:/var/lib/mysql'
+        restart: unless-stopped
+        healthcheck:
+            test:
+                - CMD
+                - mysqladmin
+                - ping
+                - '-p${DB_ROOT_PASSWORD}'
+            interval: 5s
+            timeout: 5s
+            retries: 10
+
+    redis:
+        image: redis:7-alpine
+        container_name: review-parser-redis
+        command: ['redis-server', '--appendonly', 'yes']
+        volumes:
+            - 'redis_data:/data'
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+volumes:
+    mysql_data:
+    redis_data:
