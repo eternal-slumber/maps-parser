@@ -33,7 +33,7 @@ it('authenticates a user with valid credentials', function () {
 
     $this->post(route('login.store'), [
         'email' => 'review.parser.operator+local@demo.test',
-        'password' => 'Rvp!2026_Local#Access9',
+        'password' => ' Rvp!2026 _Local#Access9 ',
     ])->assertRedirectToRoute('home');
 
     expect($user->is($legacyUser))->toBeTrue();

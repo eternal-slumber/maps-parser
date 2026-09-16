@@ -19,6 +19,10 @@ final class AuthenticatedSessionController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $request->merge([
+            'password' => preg_replace('/\s+/u', '', $request->string('password')->toString()),
+        ]);
+
         $credentials = $request->validate(
             [
                 'email' => ['required', 'email'],
